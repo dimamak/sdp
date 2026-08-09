@@ -263,11 +263,12 @@ def step_whatsapp(data: dict) -> None:
     compose = REPO / "server" / "docker" / "waha.compose.yml"
     env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port, "WAHA_PORT": str(waha_port)}
     subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
-    ok(f"WAHA container up (127.0.0.1:{waha_port})")
+    ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable from the internet)")
     print("  Pair WhatsApp now: from your laptop run")
     print(f"    ssh -L {waha_port}:127.0.0.1:{waha_port} <server>")
-    print(f"  open http://localhost:{waha_port}/dashboard (API key: {key[:8]}…), start the 'default'")
-    print("  session and scan the QR from WhatsApp → Linked devices.")
+    print(f"  then open http://localhost:{waha_port}/dashboard")
+    print(f"  login: admin / your WAHA_API_KEY (full value is in {ENV})")
+    print("  Start the 'default' session and scan the QR from WhatsApp → Linked devices.")
     print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
 
 
