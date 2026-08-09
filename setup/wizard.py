@@ -190,7 +190,11 @@ def step_telegram(data: dict) -> None:
 def step_bot(data: dict) -> None:
     print("\n== Telegram approval bot ==")
     print("  Create a bot with @BotFather if you haven't; paste its token.")
-    env_set("TG_BOT_TOKEN", ask("TG_BOT_TOKEN", env_get("TG_BOT_TOKEN") or ""))
+    token_in = ask("TG_BOT_TOKEN (empty = skip for now)", env_get("TG_BOT_TOKEN") or "")
+    if not token_in:
+        warn("skipped — re-run later with: python -m setup.wizard --source bot")
+        return
+    env_set("TG_BOT_TOKEN", token_in)
     import requests
     token = env_get("TG_BOT_TOKEN")
     r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15).json()
@@ -256,7 +260,11 @@ def step_linkedin(data: dict) -> None:
     print("  Create an app at https://developer.linkedin.com (products: 'Share on LinkedIn'")
     print("  + 'Sign In with LinkedIn using OpenID Connect'); add redirect URL")
     print("  http://localhost:8917/callback")
-    env_set("LINKEDIN_CLIENT_ID", ask("LINKEDIN_CLIENT_ID", env_get("LINKEDIN_CLIENT_ID") or ""))
+    client_id = ask("LINKEDIN_CLIENT_ID (empty = skip for now)", env_get("LINKEDIN_CLIENT_ID") or "")
+    if not client_id:
+        warn("skipped — re-run later with: python -m setup.wizard --source linkedin")
+        return
+    env_set("LINKEDIN_CLIENT_ID", client_id)
     env_set("LINKEDIN_CLIENT_SECRET", ask("LINKEDIN_CLIENT_SECRET", env_get("LINKEDIN_CLIENT_SECRET") or ""))
     data.setdefault("linkedin", {})["token_file"] = ask(
         "token file path", data.get("linkedin", {}).get("token_file", f"{data['store_dir']}/linkedin-token.json"))
