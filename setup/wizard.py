@@ -257,7 +257,17 @@ def step_whatsapp(data: dict) -> None:
                     p += 1
         return start
 
-    waha_port = int(ask("WAHA API host port (localhost)", str(first_free(3000))))
+    def current_waha_port() -> int | None:
+        # if our container already runs, keep its port — otherwise a redo of this
+        # step would see the port as "busy" (by WAHA itself) and drift to a new one
+        out = subprocess.run(["docker", "port", "dailypost-waha", "3000"],
+                             capture_output=True, text=True)
+        if out.returncode == 0 and ":" in out.stdout:
+            return int(out.stdout.strip().rsplit(":", 1)[1])
+        return None
+
+    default_port = current_waha_port() or first_free(3000)
+    waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
     upsert_source(data, {"type": "whatsapp", "enabled": True,
                          "waha_url": f"http://127.0.0.1:{waha_port}", "webhook_port": int(port)})
     compose = REPO / "server" / "docker" / "waha.compose.yml"
