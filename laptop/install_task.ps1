@@ -25,15 +25,22 @@ function ConvertTo-BashPath([string]$p) {
 }
 $bashPath = ConvertTo-BashPath $pushScript
 
-$action = New-ScheduledTaskAction -Execute $bash -Argument "-lc `"'$bashPath'`""
-$triggerDaily = New-ScheduledTaskTrigger -Daily -At $Time
-# catch-up: also run at logon (script itself is incremental, so this is cheap)
-$triggerLogon = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
-
-Register-ScheduledTask -TaskName $TaskName -Action $action `
-    -Trigger @($triggerDaily, $triggerLogon) -Settings $settings -Force | Out-Null
-
-Write-Host "Scheduled task '$TaskName' registered: daily at $Time + at logon (catch-up)."
-Write-Host "Test now with:  Start-ScheduledTask -TaskName $TaskName"
+try {
+    $action = New-ScheduledTaskAction -Execute $bash -Argument "-lc `"'$bashPath'`""
+    $triggerDaily = New-ScheduledTaskTrigger -Daily -At $Time
+    # catch-up: also run at logon (script itself is incremental, so this is cheap)
+    $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $TaskName -Action $action `
+        -Trigger @($triggerDaily, $triggerLogon) -Settings $settings -Force -ErrorAction Stop | Out-Null
+    Write-Host "Scheduled task '$TaskName' registered: daily at $Time + at logon (catch-up)."
+} catch {
+    # Register-ScheduledTask can be denied without elevation; schtasks daily-only works per-user
+    Write-Host "Register-ScheduledTask failed ($($_.Exception.Message.Trim())) - falling back to schtasks (daily only)."
+    $tr = "\`"$bash\`" -lc $bashPath"
+    schtasks /Create /F /TN $TaskName /SC DAILY /ST $Time /TR $tr | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "schtasks fallback failed too" }
+    Write-Host "Scheduled task '$TaskName' registered: daily at $Time (run once at logon skipped - needs admin)."
+}
+Write-Host "Test now with:  schtasks /Run /TN $TaskName"
