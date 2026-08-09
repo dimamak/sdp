@@ -1,0 +1,437 @@
+"""Interactive setup wizard (server side): selects sources AND provisions them.
+
+    python -m setup.wizard              # full guided setup (idempotent, re-runnable)
+    python -m setup.wizard --source X   # re-run one step: base|claude|telegram|gmail|
+                                        #   whatsapp|linkedin|bot|cron|systemd
+    python -m setup.wizard --doctor     # health check of everything enabled
+
+Writes config.yaml / .env next to the repo root; never touches code.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import secrets
+import shutil
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+CONFIG = REPO / "config.yaml"
+ENV = REPO / ".env"
+
+GREEN, RED, YELLOW, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[0m"
+
+
+def ok(msg):
+    print(f"  {GREEN}✔{RESET} {msg}")
+
+
+def bad(msg):
+    print(f"  {RED}✘{RESET} {msg}")
+
+
+def warn(msg):
+    print(f"  {YELLOW}!{RESET} {msg}")
+
+
+def ask(prompt: str, default: str = "") -> str:
+    v = input(f"{prompt}{f' [{default}]' if default else ''}: ").strip()
+    return v or default
+
+
+def yes(prompt: str, default: bool = True) -> bool:
+    v = input(f"{prompt} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+    return default if not v else v.startswith("y")
+
+
+# ---------- config/env file helpers ------------------------------------------
+
+def load_data() -> dict:
+    if CONFIG.exists():
+        return yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
+    return yaml.safe_load((REPO / "config.example.yaml").read_text(encoding="utf-8")) or {}
+
+
+def save_data(data: dict) -> None:
+    CONFIG.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    ok(f"saved {CONFIG}")
+
+
+def env_set(key: str, value: str) -> None:
+    lines = ENV.read_text().splitlines() if ENV.exists() else []
+    lines = [l for l in lines if not l.startswith(f"{key}=")]
+    lines.append(f"{key}={value}")
+    ENV.write_text("\n".join(lines) + "\n")
+    try:
+        ENV.chmod(0o600)
+    except OSError:
+        pass
+
+
+def env_get(key: str) -> str | None:
+    if not ENV.exists():
+        return None
+    for l in ENV.read_text().splitlines():
+        if l.startswith(f"{key}="):
+            return l.split("=", 1)[1].strip() or None
+    return None
+
+
+def get_source(data: dict, type_: str) -> dict | None:
+    for s in data.get("sources", []):
+        if s.get("type") == type_:
+            return s
+    return None
+
+
+def upsert_source(data: dict, src: dict) -> None:
+    sources = data.setdefault("sources", [])
+    for i, s in enumerate(sources):
+        if s.get("type") == src["type"] and s.get("name") == src.get("name"):
+            sources[i] = src
+            return
+    sources.append(src)
+
+
+# ---------- steps -------------------------------------------------------------
+
+def step_base(data: dict) -> None:
+    print("\n== Base ==")
+    data["install_root"] = ask("install root", data.get("install_root", "/opt/dailypost"))
+    root = data["install_root"]
+    data["store_dir"] = ask("store dir", data.get("store_dir", f"{root}/data"))
+    data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir", f"{root}/ingest"))
+    data["logs_dir"] = ask("logs dir", data.get("logs_dir", f"{root}/logs"))
+    data["run_as_user"] = ask("run-as user", data.get("run_as_user", os.environ.get("USER", "app")))
+    pl = data.setdefault("pipeline", {})
+    pl["timezone"] = ask("timezone", pl.get("timezone", "UTC"))
+    pl["cron_utc"] = ask("nightly cron (UTC, crontab syntax)", pl.get("cron_utc", "30 0 * * *"))
+    for d in (data["store_dir"], f"{data['ingest_dir']}/laptop", data["logs_dir"]):
+        Path(d).mkdir(parents=True, exist_ok=True)
+    ok("directories created")
+    venv = REPO / ".venv"
+    if not venv.exists():
+        print("  creating venv + installing requirements...")
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+        subprocess.run([str(venv / "bin" / "pip"), "install", "-q", "-r", str(REPO / "requirements.txt")], check=True)
+    ok("venv ready")
+
+
+def step_claude(data: dict) -> None:
+    print("\n== Claude Code sessions ==")
+    if yes("harvest a plain per-user projects dir on THIS machine?", False):
+        d = ask("projects dir", "~/.claude/projects")
+        upsert_source(data, {"type": "claude_projects_dir", "enabled": True,
+                             "name": "claude-server-cli", "projects_dir": d})
+    if yes("harvest sessions from a shared/multi-user host DB (filtered to you)?", False):
+        projects_dir = ask("projects dir holding the JSONL files")
+        strategy = ask("filter strategy (all|sql|command|id_file)", "sql")
+        fcfg: dict = {"strategy": strategy}
+        if strategy == "sql":
+            fcfg["db_path"] = ask("path to the platform's SQLite DB")
+            print("  Your SQL must return claude session-id rows. Named params allowed;")
+            print("  $SINCE inside params is replaced with the window start timestamp.")
+            fcfg["query"] = ask("SQL query")
+            params = {}
+            while True:
+                kv = ask("param as key=value (empty when done)")
+                if not kv:
+                    break
+                k, _, v = kv.partition("=")
+                params[k.strip()] = v.strip()
+            fcfg["params"] = params
+            # live test
+            try:
+                from server.harvest.claude_sessions import resolve_session_ids
+                ids = resolve_session_ids(fcfg, "1970-01-01 00:00:00")
+                ok(f"filter test: matched {len(ids)} sessions total")
+                if not yes("looks right?"):
+                    return step_claude(data)
+            except Exception as e:
+                bad(f"filter test failed: {e}")
+                if yes("retry?"):
+                    return step_claude(data)
+        elif strategy == "command":
+            fcfg["command"] = ask("shell command printing one session id per line")
+        elif strategy == "id_file":
+            fcfg["path"] = ask("path to id file")
+        upsert_source(data, {"type": "claude_sessions", "enabled": True, "name": "claude-ide",
+                             "projects_dir": projects_dir, "filter": fcfg})
+    # laptop ingest is on by default
+    upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "laptop",
+                         "path": f"{data['ingest_dir']}/laptop"})
+    print("  Laptop side: clone the repo on the laptop and run setup\\wizard_laptop.ps1")
+
+
+def step_telegram(data: dict) -> None:
+    print("\n== Telegram (personal history via Telethon) ==")
+    if not yes("enable Telegram harvesting?", get_source(data, "telegram") is not None):
+        return
+    print("  Get api_id/api_hash at https://my.telegram.org → API development tools")
+    env_set("TG_API_ID", ask("TG_API_ID", env_get("TG_API_ID") or ""))
+    env_set("TG_API_HASH", ask("TG_API_HASH", env_get("TG_API_HASH") or ""))
+    session_file = ask("session file path", f"{data['store_dir']}/telethon.session")
+    upsert_source(data, {"type": "telegram", "enabled": True, "session_file": session_file,
+                         "max_dialogs": 40, "max_messages_per_dialog": 300})
+    if yes("run interactive Telegram login now (SMS/2FA prompt)?"):
+        from telethon.sync import TelegramClient
+        with TelegramClient(session_file, int(env_get("TG_API_ID")), env_get("TG_API_HASH")) as c:
+            me = c.get_me()
+            ok(f"logged in as {me.first_name} (id {me.id})")
+
+
+def step_bot(data: dict) -> None:
+    print("\n== Telegram approval bot ==")
+    print("  Create a bot with @BotFather if you haven't; paste its token.")
+    env_set("TG_BOT_TOKEN", ask("TG_BOT_TOKEN", env_get("TG_BOT_TOKEN") or ""))
+    import requests
+    token = env_get("TG_BOT_TOKEN")
+    r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15).json()
+    if not r.get("ok"):
+        bad(f"getMe failed: {r}")
+        return
+    ok(f"bot @{r['result']['username']} verified")
+    chat_id = env_get("TG_ALLOWED_CHAT_ID")
+    if not chat_id or yes("(re)detect your chat id?", not chat_id):
+        input(f"  Send any message to @{r['result']['username']} now, then press Enter... ")
+        upd = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=15).json()
+        chats = {u["message"]["chat"]["id"] for u in upd.get("result", []) if "message" in u}
+        if len(chats) == 1:
+            chat_id = str(chats.pop())
+            ok(f"chat id detected: {chat_id}")
+        else:
+            chat_id = ask("could not auto-detect; enter chat id manually")
+        env_set("TG_ALLOWED_CHAT_ID", chat_id)
+    data.setdefault("bot", {})["enabled"] = True
+
+
+def step_gmail(data: dict) -> None:
+    print("\n== Gmail ==")
+    if not yes("enable Gmail digest?", get_source(data, "gmail") is not None):
+        return
+    token_file = ask("token file path", f"{data['store_dir']}/gmail-token.json")
+    upsert_source(data, {"type": "gmail", "enabled": True, "token_file": token_file,
+                         "credentials_file": f"{data['store_dir']}/gmail-oauth-client.json",
+                         "transcript_senders": ["@fathom.video", "@tldv.io", "@tactiq.io"]})
+    if Path(os.path.expanduser(token_file)).exists():
+        ok("token file already present")
+    else:
+        print("  OAuth needs a browser. On your laptop (same repo):")
+        print("    python -m setup.gmail_auth --client gmail-oauth-client.json --out gmail-token.json")
+        print(f"  then copy gmail-token.json to this server at: {token_file}")
+
+
+def step_whatsapp(data: dict) -> None:
+    print("\n== WhatsApp (WAHA, read-only) ==")
+    if not yes("enable WhatsApp capture via self-hosted WAHA?", get_source(data, "whatsapp") is not None):
+        return
+    if not shutil.which("docker"):
+        bad("docker not found — install docker first")
+        return
+    key = env_get("WAHA_API_KEY") or secrets.token_hex(24)
+    env_set("WAHA_API_KEY", key)
+    port = ask("webhook port (localhost)", "8477")
+    upsert_source(data, {"type": "whatsapp", "enabled": True,
+                         "waha_url": "http://127.0.0.1:3000", "webhook_port": int(port)})
+    compose = REPO / "server" / "docker" / "waha.compose.yml"
+    env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port}
+    subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
+    ok("WAHA container up (127.0.0.1:3000)")
+    print("  Pair WhatsApp now: from your laptop run")
+    print("    ssh -L 3000:127.0.0.1:3000 <server>")
+    print(f"  open http://localhost:3000/dashboard (API key: {key[:8]}…), start the 'default'")
+    print("  session and scan the QR from WhatsApp → Linked devices.")
+    print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
+
+
+def step_linkedin(data: dict) -> None:
+    print("\n== LinkedIn ==")
+    print("  Create an app at https://developer.linkedin.com (products: 'Share on LinkedIn'")
+    print("  + 'Sign In with LinkedIn using OpenID Connect'); add redirect URL")
+    print("  http://localhost:8917/callback")
+    env_set("LINKEDIN_CLIENT_ID", ask("LINKEDIN_CLIENT_ID", env_get("LINKEDIN_CLIENT_ID") or ""))
+    env_set("LINKEDIN_CLIENT_SECRET", ask("LINKEDIN_CLIENT_SECRET", env_get("LINKEDIN_CLIENT_SECRET") or ""))
+    data.setdefault("linkedin", {})["token_file"] = ask(
+        "token file path", data.get("linkedin", {}).get("token_file", f"{data['store_dir']}/linkedin-token.json"))
+    print("  Then run the OAuth flow (laptop with browser, same repo + .env):")
+    print("    python -m server.bot.linkedin_auth")
+    print("  or headless here:  python -m server.bot.linkedin_auth --no-browser")
+    print(f"  and make sure the token lands at: {data['linkedin']['token_file']}")
+
+
+def step_cron(data: dict) -> None:
+    print("\n== Cron ==")
+    tag = "# dailypost-nightly"
+    line = (f"{data['pipeline']['cron_utc']} {REPO}/server/run_nightly.sh "
+            f">> {data['logs_dir']}/nightly.log 2>&1 {tag}")
+    cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    lines = [l for l in (cur.stdout.splitlines() if cur.returncode == 0 else []) if tag not in l]
+    lines.append(line)
+    subprocess.run(["crontab", "-"], input="\n".join(lines) + "\n", text=True, check=True)
+    os.chmod(REPO / "server" / "run_nightly.sh", 0o755)
+    ok(f"crontab installed: {line}")
+
+
+def step_systemd(data: dict) -> None:
+    print("\n== Bot service (systemd) ==")
+    unit_src = (REPO / "server" / "systemd" / "dailypost-bot.service").read_text()
+    unit = unit_src.replace("__APP_DIR__", str(REPO)).replace("__USER__", data["run_as_user"])
+    target = Path("/etc/systemd/system/dailypost-bot.service")
+    try:
+        if os.geteuid() == 0:
+            target.write_text(unit)
+        else:
+            subprocess.run(["sudo", "tee", str(target)], input=unit, text=True,
+                           check=True, stdout=subprocess.DEVNULL)
+        sysctl = ["systemctl"] if os.geteuid() == 0 else ["sudo", "systemctl"]
+        subprocess.run([*sysctl, "daemon-reload"], check=True)
+        subprocess.run([*sysctl, "enable", "--now", "dailypost-bot"], check=True)
+        ok("dailypost-bot service enabled + started")
+    except Exception as e:
+        bad(f"systemd install failed ({e}); unit content written to {REPO / 'dailypost-bot.service.generated'}")
+        (REPO / "dailypost-bot.service.generated").write_text(unit)
+
+
+# ---------- doctor -------------------------------------------------------------
+
+def doctor() -> int:
+    print("== dailypost doctor ==")
+    failures = 0
+
+    def check(name, fn):
+        nonlocal failures
+        try:
+            msg = fn()
+            ok(f"{name}: {msg or 'ok'}")
+        except Exception as e:
+            bad(f"{name}: {e}")
+            failures += 1
+
+    if not CONFIG.exists():
+        bad("config.yaml missing — run the wizard")
+        return 1
+    from server.config import Config
+    cfg = Config.load(CONFIG)
+
+    check("store", lambda: (__import__('server.store', fromlist=['Store']).Store(cfg.path_of('store_dir')) and
+                            f"writable at {cfg.path_of('store_dir')}"))
+    check("claude CLI", lambda: subprocess.run(
+        [str(cfg.get("pipeline.claude_bin", "claude")), "--version"],
+        capture_output=True, text=True, check=True).stdout.strip())
+
+    for src in cfg.sources():
+        t = src["type"]
+        name = src.get("name", t)
+        if t in ("claude_projects_dir",):
+            check(name, lambda s=src: f"dir exists" if Path(os.path.expanduser(s['projects_dir'])).exists()
+                  else (_ for _ in ()).throw(RuntimeError("projects dir missing")))
+        elif t == "claude_sessions":
+            def _cs(s=src):
+                from server.harvest.claude_sessions import resolve_session_ids
+                ids = resolve_session_ids(s.get("filter"), "1970-01-01 00:00:00")
+                return f"filter matches {len(ids) if ids is not None else 'ALL'} sessions"
+            check(name, _cs)
+        elif t == "ingest_dir":
+            check(name, lambda s=src: "ok" if Path(s["path"]).exists()
+                  else (_ for _ in ()).throw(RuntimeError("ingest dir missing")))
+        elif t == "telegram":
+            check(name, lambda s=src: "session file present" if Path(os.path.expanduser(s["session_file"])).exists()
+                  else (_ for _ in ()).throw(RuntimeError("session file missing — run wizard --source telegram")))
+        elif t == "gmail":
+            def _gm(s=src):
+                from server.harvest.gmail import _client
+                _client(Path(os.path.expanduser(s["token_file"])), Path(""))
+                return "token valid"
+            check(name, _gm)
+        elif t == "whatsapp":
+            def _wa(s=src):
+                import requests
+                r = requests.get(f"{s['waha_url']}/api/sessions",
+                                 headers={"X-Api-Key": cfg.secret("WAHA_API_KEY") or ""}, timeout=10)
+                r.raise_for_status()
+                sessions = r.json()
+                st = sessions[0]["status"] if sessions else "NO SESSION"
+                if st != "WORKING":
+                    raise RuntimeError(f"session status {st}")
+                return "session WORKING"
+            check(name, _wa)
+
+    def _bot():
+        import requests
+        token = cfg.secret("TG_BOT_TOKEN")
+        if not token:
+            raise RuntimeError("TG_BOT_TOKEN not set")
+        r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15).json()
+        if not r.get("ok"):
+            raise RuntimeError(str(r))
+        return f"@{r['result']['username']}"
+    check("telegram bot", _bot)
+
+    def _li():
+        from server.bot.linkedin_client import LinkedInClient
+        d = LinkedInClient(cfg).days_until_expiry()
+        if d is None:
+            raise RuntimeError("no token — run linkedin_auth")
+        if d < 7:
+            raise RuntimeError(f"token expires in {d} days")
+        return f"token ok, {d} days left"
+    check("linkedin", _li)
+
+    def _cron():
+        out = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        if "dailypost-nightly" not in out.stdout:
+            raise RuntimeError("nightly cron entry missing")
+        return "installed"
+    check("cron", _cron)
+
+    def _svc():
+        out = subprocess.run(["systemctl", "is-active", "dailypost-bot"], capture_output=True, text=True)
+        if out.stdout.strip() != "active":
+            raise RuntimeError(out.stdout.strip() or "not installed")
+        return "active"
+    check("bot service", _svc)
+
+    print(f"\n{failures} problem(s)" if failures else f"\n{GREEN}all green{RESET}")
+    return 1 if failures else 0
+
+
+STEPS = {
+    "base": step_base, "claude": step_claude, "telegram": step_telegram,
+    "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
+    "linkedin": step_linkedin, "cron": step_cron, "systemd": step_systemd,
+}
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--doctor", action="store_true")
+    ap.add_argument("--source", choices=sorted(STEPS), help="run a single step")
+    args = ap.parse_args(argv)
+
+    if args.doctor:
+        return doctor()
+
+    data = load_data()
+    if args.source:
+        STEPS[args.source](data)
+        save_data(data)
+        return 0
+
+    print("=== dailypost setup wizard ===")
+    for name in ("base", "claude", "telegram", "bot", "gmail", "whatsapp", "linkedin", "cron", "systemd"):
+        STEPS[name](data)
+        save_data(data)
+    print("\nSetup complete. Run health check:  python -m setup.wizard --doctor")
+    print("Manual first run:                  server/run_nightly.sh --dry-run")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,25 @@
+# Self-hosted WAHA (WhatsApp HTTP API) — read-only capture.
+# Started by the setup wizard:  docker compose -f waha.compose.yml up -d
+# API + dashboard bound to localhost only. WEBJS engine = real WhatsApp Web
+# session (closest to normal usage). NEVER send messages through this.
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: dailypost-waha
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      # webhook → bot service (host network address from inside the container)
+      - WHATSAPP_HOOK_URL=http://host.docker.internal:${WAHA_WEBHOOK_PORT:-8477}/waha
+      - WHATSAPP_HOOK_EVENTS=message
+      - WHATSAPP_RESTART_ALL_SESSIONS=True
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - waha-sessions:/app/.sessions
+
+volumes:
+  waha-sessions:

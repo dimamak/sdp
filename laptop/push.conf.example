@@ -1,0 +1,9 @@
+# laptop push configuration — copy to push.conf (git-ignored) or let wizard_laptop.ps1 generate it.
+# Read by push_daily.sh (bash). One PUSH_PATH per line: name|directory|include-glob
+REMOTE=myserver
+REMOTE_DIR=/opt/dailypost/ingest/laptop
+# optional command run on the remote after extraction (e.g. fix ownership):
+REMOTE_POST_CMD=
+
+PUSH_PATH=claude|$HOME/.claude/projects|*.jsonl
+PUSH_PATH=screenshots|$HOME/Pictures/Screenshots|*.png

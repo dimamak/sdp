@@ -1,0 +1,19 @@
+# Installed by the setup wizard to /etc/systemd/system/dailypost-bot.service
+# (placeholders __APP_DIR__ / __USER__ are substituted at install time)
+[Unit]
+Description=dailypost approval bot (Telegram long-poll + WAHA webhook)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python -m server.bot.main
+Restart=always
+RestartSec=10
+Nice=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

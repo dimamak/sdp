@@ -1,0 +1,19 @@
+# Instance config & secrets — never committed
+config.yaml
+.env
+laptop/push.conf
+*.session
+*.session-journal
+tokens/
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db

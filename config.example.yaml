@@ -1,0 +1,105 @@
+# dailypost — instance configuration (copy to config.yaml and edit; config.yaml is git-ignored)
+# All paths may use ~. Secrets go in .env, never here.
+
+install_root: /opt/dailypost          # server install root
+store_dir: /opt/dailypost/data        # SQLite store + files/
+ingest_dir: /opt/dailypost/ingest     # where the laptop push lands
+logs_dir: /opt/dailypost/logs
+run_as_user: youruser                 # non-root user that owns everything and runs jobs
+
+pipeline:
+  timezone: Asia/Jerusalem            # day boundaries + "yesterday" logic
+  cron_utc: "30 0 * * *"              # nightly run (server crontab, UTC)
+  window_hours: 26                    # how far back the digest looks for un-used items
+  digest_max_chars: 400000            # hard cap on digest size fed to the LLM
+  per_item_max_chars: 4000            # cap per harvested item in the digest
+  model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
+  claude_bin: claude                  # path to the claude CLI
+  language_out: English               # language of the LinkedIn post
+
+# ---------------------------------------------------------------------------
+# Sources: a LIST of adapter instances. Each entry has a `type` (registered in
+# server/harvest/) and `enabled`. Add/remove/duplicate entries freely.
+# ---------------------------------------------------------------------------
+sources:
+  # Claude Code JSONL transcripts in a plain per-user directory (single-user machine).
+  - type: claude_projects_dir
+    enabled: true
+    name: claude-server-cli
+    projects_dir: ~/.claude/projects
+
+  # Claude Code JSONL transcripts filtered to *your* sessions on a shared/multi-user
+  # host (e.g. a coding-agent platform / hosted IDE). The harvester only needs a list
+  # of session IDs; how that list is produced is the `filter` strategy:
+  #   all      — every session in projects_dir (same as claude_projects_dir)
+  #   sql      — run a SQL query against a SQLite DB; must return claude session-id rows.
+  #              $SINCE in params is replaced with the ISO timestamp of the last run.
+  #   command  — run a shell command that prints one session id per line
+  #   id_file  — read session ids from a text file (one per line)
+  - type: claude_sessions
+    enabled: false
+    name: claude-ide
+    projects_dir: /home/ideuser/.claude/projects
+    filter:
+      strategy: sql
+      db_path: /path/to/platform.db
+      query: >
+        SELECT s.claude_session_id FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE u.username = :username AND s.updated_at >= :since
+      params:
+        username: yourname
+        since: $SINCE
+
+  # Files pushed from the laptop (Claude JSONL, screenshots, audio) — see laptop/push_daily.sh.
+  - type: ingest_dir
+    enabled: true
+    name: laptop
+    path: /opt/dailypost/ingest/laptop
+
+  # Telegram personal history via Telethon (MTProto). Needs one-time interactive
+  # login (setup wizard) to create the session file. api_id/api_hash in .env.
+  - type: telegram
+    enabled: false
+    session_file: /opt/dailypost/data/telethon.session
+    max_dialogs: 40                    # newest dialogs scanned per night
+    max_messages_per_dialog: 300
+
+  # Gmail digest (sent + received, subjects + snippets). One-time OAuth via wizard.
+  - type: gmail
+    enabled: false
+    token_file: /opt/dailypost/data/gmail-token.json
+    credentials_file: /opt/dailypost/data/gmail-oauth-client.json
+    # Emails from these senders are treated as meeting transcripts (full body kept):
+    transcript_senders: ["@fathom.video", "@tldv.io", "@tactiq.io"]
+
+  # WhatsApp via self-hosted WAHA (read-only). Messages arrive continuously through
+  # the webhook receiver in the bot service; this entry only declares it for doctor/digest.
+  - type: whatsapp
+    enabled: false
+    waha_url: http://127.0.0.1:3000
+    webhook_port: 8477                 # localhost port the bot service listens on
+
+bot:
+  # Telegram bot for draft delivery + Approve/Edit/Skip. Token + allowed chat id in .env.
+  enabled: true
+
+linkedin:
+  token_file: /opt/dailypost/data/linkedin-token.json
+  api_version: "202506"                # LinkedIn Rest version header (rest/posts)
+
+# Laptop side (read by wizard_laptop.ps1 to generate laptop/push.conf; the bash
+# push script itself reads push.conf, not this file)
+laptop:
+  remote: myserver                     # ssh alias from ~/.ssh/config
+  remote_ingest_dir: /opt/dailypost/ingest/laptop
+  remote_post_cmd: ""                  # optional, e.g. "chown -R youruser: /opt/dailypost/ingest/laptop"
+  push_paths:
+    - name: claude
+      dir: ~/.claude/projects
+      include: "*.jsonl"
+    - name: screenshots
+      dir: ~/Pictures/Screenshots
+      include: "*.png"
+
+retention_days: 30                     # prune raw files under store files/ after N days
