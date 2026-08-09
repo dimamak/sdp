@@ -489,6 +489,83 @@ STEPS = {
 }
 
 
+# ---------- completion probes: full runs continue from current state -----------
+
+def _done_base(data):
+    if CONFIG.exists() and data.get("store_dir") and Path(data["store_dir"]).exists() \
+            and (REPO / ".venv").exists():
+        return f"dirs + venv ready, store at {data['store_dir']}"
+
+
+def _done_claude(data):
+    types = {s.get("type") for s in data.get("sources", []) if s.get("enabled")}
+    if types & {"claude_projects_dir", "claude_sessions"}:
+        return "claude source(s) configured"
+
+
+def _done_telegram(data):
+    src = get_source(data, "telegram")
+    if src and src.get("enabled") and Path(os.path.expanduser(src["session_file"])).exists():
+        return "logged in (session file present)"
+
+
+def _done_bot(data):
+    if env_get("TG_BOT_TOKEN") and env_get("TG_ALLOWED_CHAT_ID"):
+        return "token + chat id set"
+
+
+def _done_gmail(data):
+    src = get_source(data, "gmail")
+    if src and src.get("enabled") and Path(os.path.expanduser(src["token_file"])).exists():
+        return "token present"
+
+
+def _done_whatsapp(data):
+    src = get_source(data, "whatsapp")
+    if src and src.get("enabled") and env_get("WAHA_API_KEY"):
+        return f"configured at {src['waha_url']}"
+
+
+def _done_pair(data):
+    src = get_source(data, "whatsapp")
+    if not (src and src.get("enabled")):
+        return "n/a (whatsapp disabled)"
+    try:
+        import requests
+        r = requests.get(f"{src['waha_url']}/api/sessions/default",
+                         headers={"X-Api-Key": env_get("WAHA_API_KEY") or ""}, timeout=5)
+        if r.ok and r.json().get("status") == "WORKING":
+            return "session WORKING"
+    except Exception:
+        pass
+
+
+def _done_linkedin(data):
+    tf = data.get("linkedin", {}).get("token_file")
+    if tf and Path(os.path.expanduser(tf)).exists():
+        return "token present"
+
+
+def _done_cron(data):
+    out = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    if "dailypost-nightly" in out.stdout:
+        return "nightly entry installed"
+
+
+def _done_systemd(data):
+    out = subprocess.run(["systemctl", "is-active", "dailypost-bot"], capture_output=True, text=True)
+    if out.stdout.strip() == "active":
+        return "service active"
+
+
+DONE_PROBES = {
+    "base": _done_base, "claude": _done_claude, "telegram": _done_telegram,
+    "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
+    "pair": _done_pair, "linkedin": _done_linkedin, "cron": _done_cron,
+    "systemd": _done_systemd,
+}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--doctor", action="store_true")
@@ -505,7 +582,17 @@ def main(argv=None) -> int:
         return 0
 
     print("=== dailypost setup wizard ===")
-    for name in ("base", "claude", "telegram", "bot", "gmail", "whatsapp", "linkedin", "cron", "systemd"):
+    print("(steps already completed are skipped — answer y to redo one)")
+    for name in ("base", "claude", "telegram", "bot", "gmail", "whatsapp", "pair",
+                 "linkedin", "cron", "systemd"):
+        done = None
+        try:
+            done = DONE_PROBES[name](data)
+        except Exception:
+            pass
+        if done:
+            if not yes(f"[{name}] already set up ({done}) — redo?", False):
+                continue
         STEPS[name](data)
         save_data(data)
     print("\nSetup complete. Run health check:  python -m setup.wizard --doctor")
