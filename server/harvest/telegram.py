@@ -41,7 +41,11 @@ def collect(src, cfg, store, since) -> int:
     count = 0
     newest = floor
 
-    with TelegramClient(str(session_file), int(api_id), api_hash) as client:
+    # identify ourselves clearly in Telegram's "active sessions" list, so a
+    # new-login alert from this harvester is recognisable rather than alarming
+    with TelegramClient(str(session_file), int(api_id), api_hash,
+                        device_model=str(src.get("device_label", "dailypost harvester")),
+                        system_version="read-only") as client:
         me = client.get_me()
         for dialog in client.iter_dialogs(limit=max_dialogs):
             if dialog.date and dialog.date < floor:

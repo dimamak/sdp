@@ -201,7 +201,11 @@ def step_telegram(data: dict) -> None:
                              "only harvest chats you actively wrote in (recommended)?")})
     if yes("run interactive Telegram login now (SMS/2FA prompt)?"):
         from telethon.sync import TelegramClient
-        with TelegramClient(session_file, int(env_get("TG_API_ID")), env_get("TG_API_HASH")) as c:
+        # device_model/system_version show up in Telegram's active-sessions list
+        # and in the "new login" alert — make it obvious what this is
+        with TelegramClient(session_file, int(env_get("TG_API_ID")), env_get("TG_API_HASH"),
+                            device_model="dailypost harvester",
+                            system_version="read-only") as c:
             me = c.get_me()
             ok(f"logged in as {me.first_name} (id {me.id})")
         fix_owner(data, session_file)
