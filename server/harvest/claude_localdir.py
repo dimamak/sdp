@@ -11,4 +11,5 @@ from .claude_common import harvest_dir
 def collect(src, cfg, store, since) -> int:
     projects_dir = Path(str(src["projects_dir"])).expanduser()
     name = src.get("name", "claude")
-    return harvest_dir(projects_dir, since, name, cfg, store)
+    return harvest_dir(projects_dir, since, name, cfg, store,
+                       exclude_projects=src.get("exclude_projects"))

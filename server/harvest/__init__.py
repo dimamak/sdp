@@ -20,14 +20,44 @@ def register(type_name: str):
     return deco
 
 
+def unsafe_sources(cfg) -> list[str]:
+    """Names of enabled sources that would defeat another source's ownership filter.
+
+    An unfiltered `claude_projects_dir` pointed at the same directory as a filtered
+    `claude_sessions` harvests EVERY user's transcripts on a shared host — silently
+    undoing the filter. That's a privacy failure, so those sources are refused.
+    """
+    from pathlib import Path
+    filtered_dirs = {
+        Path(str(s["projects_dir"])).expanduser().resolve()
+        for s in cfg.sources() if s.get("type") == "claude_sessions" and s.get("projects_dir")
+    }
+    bad = []
+    for s in cfg.sources():
+        if s.get("type") != "claude_projects_dir" or not s.get("projects_dir"):
+            continue
+        if Path(str(s["projects_dir"])).expanduser().resolve() in filtered_dirs:
+            bad.append(s.get("name", s["type"]))
+    return bad
+
+
 def collect_all(cfg, store, since: datetime) -> dict[str, int]:
     """Run every enabled source; returns {source name: new item count}."""
     from . import claude_localdir, claude_sessions, ingest_dir, telegram, gmail  # noqa: F401  (register)
+    from ..util import get_logger
 
+    refused = set(unsafe_sources(cfg))
     results = {}
     for src in cfg.sources():
         type_ = src.get("type")
         name = src.get("name", type_)
+        if name in refused:
+            get_logger("harvest").error(
+                "REFUSING source %s: it harvests %s unfiltered, which also holds other "
+                "users' sessions covered by a filtered source. Disable it in config.",
+                name, src.get("projects_dir"))
+            results[name] = -1
+            continue
         fn = REGISTRY.get(type_)
         if fn is None:
             # whatsapp etc. accumulate via webhook, not nightly pull

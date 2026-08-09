@@ -15,19 +15,26 @@ log = get_logger("pipeline.claude")
 
 
 def run_claude(cfg, prompt: str, *, allow_read_dirs: list[str] | None = None,
-               timeout: int = 600) -> str:
-    """Run claude -p and return the result text."""
+               timeout: int = 600, session_id: str | None = None,
+               resume: bool = False, allowed_tools: str | None = None) -> str:
+    """Run claude -p and return the result text.
+
+    session_id + resume=False starts a named session (so it can be resumed later);
+    resume=True continues that session with the full prior conversation in context.
+    """
     cmd = [
         str(cfg.get("pipeline.claude_bin", "claude")),
         "-p", "--output-format", "json",
         "--model", str(cfg.get("pipeline.model", "claude-haiku-4-5")),
     ]
+    if session_id:
+        cmd += (["--resume", session_id] if resume else ["--session-id", session_id])
     if allow_read_dirs:
         for d in allow_read_dirs:
             cmd += ["--add-dir", str(d)]
-        cmd += ["--allowedTools", "Read"]
+        cmd += ["--allowedTools", allowed_tools or "Read"]
     else:
-        cmd += ["--allowedTools", ""]  # pure text task, no tools
+        cmd += ["--allowedTools", allowed_tools if allowed_tools is not None else ""]
 
     env_extra = {}
     key = cfg.secret("ANTHROPIC_API_KEY")

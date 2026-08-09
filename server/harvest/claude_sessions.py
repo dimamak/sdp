@@ -68,4 +68,5 @@ def collect(src, cfg, store, since) -> int:
         log.info("%s: filter matched %d sessions", name, len(ids))
         if not ids:
             return 0
-    return harvest_dir(projects_dir, since, name, cfg, store, session_ids=ids)
+    return harvest_dir(projects_dir, since, name, cfg, store, session_ids=ids,
+                       exclude_projects=src.get("exclude_projects"))

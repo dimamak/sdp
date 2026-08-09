@@ -441,6 +441,16 @@ def doctor() -> int:
         [str(cfg.get("pipeline.claude_bin", "claude")), "--version"],
         capture_output=True, text=True, check=True).stdout.strip())
 
+    def _overlap():
+        from server.harvest import unsafe_sources
+        bad = unsafe_sources(cfg)
+        if bad:
+            raise RuntimeError(
+                f"source(s) {bad} harvest a shared projects dir WITHOUT an ownership "
+                "filter — other users' sessions would be captured. Disable them.")
+        return "no unfiltered source over a shared dir"
+    check("source isolation", _overlap)
+
     for src in cfg.sources():
         t = src["type"]
         name = src.get("name", t)

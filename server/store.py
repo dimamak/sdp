@@ -41,6 +41,14 @@ CREATE TABLE IF NOT EXISTS sync_state (
     source TEXT PRIMARY KEY,
     cursor TEXT
 );
+
+-- one Claude Code session per day, so the bot can hold a real conversation
+-- about that day's material (resumed with `claude -p --resume <id>`)
+CREATE TABLE IF NOT EXISTS day_sessions (
+    day TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 
@@ -136,4 +144,23 @@ class Store:
     def latest_editing_draft(self) -> sqlite3.Row | None:
         return self.db.execute(
             "SELECT * FROM drafts WHERE status='editing' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    def latest_draft_for_day(self, day: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE day=? ORDER BY id DESC LIMIT 1", (day,)
+        ).fetchone()
+
+    # ---- day sessions (conversation continuity) -------------------------------
+    def set_day_session(self, day: str, session_id: str) -> None:
+        self.db.execute(
+            "INSERT INTO day_sessions(day, session_id) VALUES(?,?)"
+            " ON CONFLICT(day) DO UPDATE SET session_id=excluded.session_id",
+            (day, session_id),
+        )
+        self.db.commit()
+
+    def latest_day_session(self) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM day_sessions ORDER BY day DESC LIMIT 1"
         ).fetchone()
