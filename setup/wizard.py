@@ -84,6 +84,23 @@ def env_get(key: str) -> str | None:
     return None
 
 
+def fix_owner(data: dict, *paths) -> None:
+    """When the wizard runs as root, hand provisioned files to the run-as user —
+    otherwise the pipeline/bot (running as that user) can't read them."""
+    user = data.get("run_as_user")
+    if not user or os.geteuid() != 0:
+        return
+    import pwd
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        return
+    for p in paths:
+        p = Path(os.path.expanduser(str(p)))
+        if p.exists():
+            os.chown(p, pw.pw_uid, pw.pw_gid)
+
+
 def get_source(data: dict, type_: str) -> dict | None:
     for s in data.get("sources", []):
         if s.get("type") == type_:
@@ -187,6 +204,7 @@ def step_telegram(data: dict) -> None:
         with TelegramClient(session_file, int(env_get("TG_API_ID")), env_get("TG_API_HASH")) as c:
             me = c.get_me()
             ok(f"logged in as {me.first_name} (id {me.id})")
+        fix_owner(data, session_file)
 
 
 def step_bot(data: dict) -> None:
@@ -355,6 +373,7 @@ def step_linkedin(data: dict) -> None:
         from server.bot.linkedin_auth import main as li_auth
         try:
             if li_auth(["--no-browser"]) == 0:
+                fix_owner(data, data["linkedin"]["token_file"])
                 ok("LinkedIn authorized")
         except Exception as e:
             bad(f"OAuth failed: {e} — retry with: python -m setup.wizard --source linkedin")
