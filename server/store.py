@@ -75,10 +75,14 @@ class Store:
         return cur.rowcount > 0
 
     def unused_items_since(self, since_iso: str) -> list[sqlite3.Row]:
+        # ts OR created_at inside the window: items pushed late (laptop was off)
+        # have an old ts but a fresh created_at and must still enter the next digest.
+        # created_at is sqlite datetime('now') format (space-separated, UTC).
+        since_sqlite = since_iso.replace("T", " ").split("+")[0]
         return self.db.execute(
-            "SELECT * FROM items WHERE used_in_draft IS NULL AND (ts >= ? OR ts IS NULL AND created_at >= ?)"
+            "SELECT * FROM items WHERE used_in_draft IS NULL AND (ts >= ? OR created_at >= ?)"
             " ORDER BY source, ts",
-            (since_iso, since_iso),
+            (since_iso, since_sqlite),
         ).fetchall()
 
     def mark_used(self, item_ids: list[int], day: str) -> None:

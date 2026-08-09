@@ -1,0 +1,30 @@
+# Roadmap
+
+Phases from the original design (generic — instance details live in the
+git-ignored `PLAN.local.md` / `config.yaml`).
+
+## Phase 1 — MVP  ✅ implemented
+- Source adapter registry with filter strategies (`all | sql | command | id_file`)
+  for multi-user Claude Code hosts
+- Laptop push (Claude JSONL + screenshots) via tar-over-ssh scheduled task
+- Telegram (Telethon), Gmail (+ meeting-notetaker transcript emails), WhatsApp
+  (WAHA, read-only webhook)
+- Nightly digest → headless `claude -p` draft → Telegram Approve/Edit/Skip →
+  official LinkedIn `w_member_social` post
+- Interactive setup wizard (`python -m setup.wizard`) + `--doctor`
+
+## Phase 2 — Audio  ▢ planned
+- Phone post-call debrief habit: automation rule ("call ended AND duration > 3 min
+  → notification → tap opens recorder"), file reaches the server via a cloud-sync
+  folder included in the laptop push list (or Syncthing phone→server)
+- Laptop in-person recording (Buzz / hotkey WAV recorder) into a pushed folder
+- Server transcription: faster-whisper, INT8 `large-v3-turbo`; for Hebrew use the
+  ivrit.ai fine-tuned weights with `language='he'` (the fine-tune can't translate —
+  transcribe Hebrew, let the draft LLM translate); configurable threads + nice level;
+  optional Groq API fallback for English/overflow
+- `transcribe.py` drains the audio queue before the digest step
+
+## Phase 3 — polish  ▢ ideas
+- Weekly "best of the week" mode when daily posting is too much
+- Edit-in-web-UI link instead of Telegram inline edit
+- Image attachment support (screenshots as post media) via LinkedIn assets API
