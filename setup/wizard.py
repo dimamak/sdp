@@ -264,12 +264,66 @@ def step_whatsapp(data: dict) -> None:
     env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port, "WAHA_PORT": str(waha_port)}
     subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
     ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable from the internet)")
-    print("  Pair WhatsApp now: from your laptop run")
-    print(f"    ssh -L {waha_port}:127.0.0.1:{waha_port} <server>")
-    print(f"  then open http://localhost:{waha_port}/dashboard")
-    print(f"  login: admin / your WAHA_API_KEY (full value is in {ENV})")
-    print("  Start the 'default' session and scan the QR from WhatsApp → Linked devices.")
     print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
+    if yes("pair WhatsApp now (QR code shown right here in the terminal)?"):
+        step_pair(data)
+    else:
+        print("  Pair later with:  python -m setup.wizard --source pair")
+        print("  (or via dashboard through an ssh tunnel:")
+        print(f"     ssh -L {waha_port}:127.0.0.1:{waha_port} <server>  →  http://localhost:{waha_port}/dashboard")
+        print(f"     login: admin / your WAHA_API_KEY from {ENV})")
+
+
+def step_pair(data: dict) -> None:
+    """Pair WhatsApp by rendering the QR in the terminal — no tunnel/browser needed."""
+    print("\n== WhatsApp pairing ==")
+    import time
+
+    import requests
+
+    src = get_source(data, "whatsapp")
+    if not src:
+        bad("whatsapp source not configured — run --source whatsapp first")
+        return
+    base = src["waha_url"]
+    headers = {"X-Api-Key": env_get("WAHA_API_KEY") or ""}
+
+    def session_status() -> str:
+        r = requests.get(f"{base}/api/sessions/default", headers=headers, timeout=10)
+        if r.status_code == 404:
+            requests.post(f"{base}/api/sessions", headers=headers,
+                          json={"name": "default", "start": True}, timeout=30)
+            return "STARTING"
+        return r.json().get("status", "UNKNOWN")
+
+    st = session_status()
+    if st == "WORKING":
+        ok("already paired — session WORKING")
+        return
+    if st in ("STOPPED", "FAILED"):
+        requests.post(f"{base}/api/sessions/default/start", headers=headers, timeout=30)
+
+    print("  Open WhatsApp on your phone → Settings → Linked devices → Link a device")
+    print("  Waiting for QR (it refreshes automatically; Ctrl-C to abort)...")
+    import qrcode
+    shown = None
+    for _ in range(120):  # ~4 minutes
+        st = session_status()
+        if st == "WORKING":
+            ok("WhatsApp paired — session WORKING")
+            return
+        if st == "SCAN_QR_CODE":
+            r = requests.get(f"{base}/api/default/auth/qr?format=raw", headers=headers, timeout=10)
+            value = r.json().get("value") if r.ok else None
+            if value and value != shown:
+                shown = value
+                qr = qrcode.QRCode(border=1)
+                qr.add_data(value)
+                qr.make()
+                qr.print_ascii(invert=True)
+                print("  ↑ scan this; a fresh code is drawn automatically if it expires")
+        time.sleep(2)
+    warn("timed out — re-run: python -m setup.wizard --source pair")
 
 
 def step_linkedin(data: dict) -> None:
@@ -430,7 +484,8 @@ def doctor() -> int:
 STEPS = {
     "base": step_base, "claude": step_claude, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
-    "linkedin": step_linkedin, "cron": step_cron, "systemd": step_systemd,
+    "pair": step_pair, "linkedin": step_linkedin, "cron": step_cron,
+    "systemd": step_systemd,
 }
 
 

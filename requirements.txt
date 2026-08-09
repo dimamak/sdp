@@ -6,3 +6,5 @@ fastapi>=0.110
 uvicorn>=0.29
 google-api-python-client>=2.120
 google-auth-oauthlib>=1.2
+qrcode>=7.4
+
