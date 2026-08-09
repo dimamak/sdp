@@ -14,10 +14,16 @@ log = get_logger("pipeline.draft")
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
+def _prompt_file(cfg, key: str, default_name: str) -> Path:
+    """Instance override (config path, survives deploys) or the repo default."""
+    override = cfg.path_of(f"pipeline.{key}")
+    return override if override and override.exists() else PROMPTS_DIR / default_name
+
+
 def write_draft(cfg, store, day: str, digest: str) -> int | None:
     """Returns draft id, or None if nothing post-worthy."""
-    style = (PROMPTS_DIR / "style-guide.md").read_text(encoding="utf-8")
-    task = (PROMPTS_DIR / "draft-prompt.md").read_text(encoding="utf-8")
+    style = _prompt_file(cfg, "style_guide", "style-guide.md").read_text(encoding="utf-8")
+    task = _prompt_file(cfg, "draft_prompt", "draft-prompt.md").read_text(encoding="utf-8")
     task = task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
