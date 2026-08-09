@@ -12,6 +12,12 @@ services:
     environment:
       - WHATSAPP_DEFAULT_ENGINE=WEBJS
       - WAHA_API_KEY=${WAHA_API_KEY}
+      # dashboard + swagger logins default to admin/admin — reuse the API key
+      # as password so no default credential exists anywhere
+      - WAHA_DASHBOARD_USERNAME=admin
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_API_KEY}
+      - WHATSAPP_SWAGGER_USERNAME=admin
+      - WHATSAPP_SWAGGER_PASSWORD=${WAHA_API_KEY}
       # webhook → bot service (host network address from inside the container)
       - WHATSAPP_HOOK_URL=http://host.docker.internal:${WAHA_WEBHOOK_PORT:-8477}/waha
       - WHATSAPP_HOOK_EVENTS=message
