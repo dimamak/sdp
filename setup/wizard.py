@@ -349,10 +349,17 @@ def step_linkedin(data: dict) -> None:
     env_set("LINKEDIN_CLIENT_SECRET", ask("LINKEDIN_CLIENT_SECRET", env_get("LINKEDIN_CLIENT_SECRET") or ""))
     data.setdefault("linkedin", {})["token_file"] = ask(
         "token file path", data.get("linkedin", {}).get("token_file", f"{data['store_dir']}/linkedin-token.json"))
-    print("  Then run the OAuth flow (laptop with browser, same repo + .env):")
-    print("    python -m server.bot.linkedin_auth")
-    print("  or headless here:  python -m server.bot.linkedin_auth --no-browser")
-    print(f"  and make sure the token lands at: {data['linkedin']['token_file']}")
+    if yes("run the OAuth now? (a URL is shown — open it in your laptop browser, approve,\n"
+           "  then paste the localhost redirect URL from the address bar back here)"):
+        save_data(data)  # linkedin_auth reads token_file path from config.yaml
+        from server.bot.linkedin_auth import main as li_auth
+        try:
+            if li_auth(["--no-browser"]) == 0:
+                ok("LinkedIn authorized")
+        except Exception as e:
+            bad(f"OAuth failed: {e} — retry with: python -m setup.wizard --source linkedin")
+    else:
+        print("  Later: python -m setup.wizard --source linkedin  (or python -m server.bot.linkedin_auth)")
 
 
 def step_cron(data: dict) -> None:
