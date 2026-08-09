@@ -64,6 +64,8 @@ sources:
     session_file: /opt/dailypost/data/telethon.session
     max_dialogs: 40                    # newest dialogs scanned per night
     max_messages_per_dialog: 300
+    require_my_participation: true     # keep a chat only if YOU wrote in it during
+                                       # the window (skips lurked channels/groups)
 
   # Gmail digest (sent + received, subjects + snippets). One-time OAuth via wizard.
   - type: gmail

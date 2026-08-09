@@ -35,6 +35,9 @@ def collect(src, cfg, store, since) -> int:
 
     max_dialogs = int(src.get("max_dialogs", 40))
     max_msgs = int(src.get("max_messages_per_dialog", 300))
+    # only keep a chat's messages if I wrote something there within the window —
+    # skips lurked channels/groups where I never participate
+    require_participation = bool(src.get("require_my_participation", True))
     count = 0
     newest = floor
 
@@ -44,6 +47,8 @@ def collect(src, cfg, store, since) -> int:
             if dialog.date and dialog.date < floor:
                 continue
             title = dialog.name or str(dialog.id)
+            batch = []
+            i_participated = False
             for msg in client.iter_messages(dialog.entity, limit=max_msgs):
                 if msg.date is None or msg.date <= floor:
                     break
@@ -51,14 +56,20 @@ def collect(src, cfg, store, since) -> int:
                     continue
                 ts = msg.date.astimezone(timezone.utc)
                 newest = max(newest, ts)
-                direction = "me" if msg.sender_id == me.id else "them"
+                mine = bool(msg.out) or msg.sender_id == me.id
+                i_participated = i_participated or mine
+                batch.append((msg.id, ts, msg.text, "me" if mine else "them"))
+            if require_participation and not i_participated:
+                log.debug("skip %s: no messages of mine in window", title)
+                continue
+            for msg_id, ts, text, direction in batch:
                 if store.add_item(
                     source="telegram",
-                    external_id=f"{dialog.id}:{msg.id}",
+                    external_id=f"{dialog.id}:{msg_id}",
                     day=day_of(ts, cfg),
                     ts=ts.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                     kind="message",
-                    summary=msg.text[:2000],
+                    summary=text[:2000],
                     meta={"chat": title, "direction": direction},
                 ):
                     count += 1

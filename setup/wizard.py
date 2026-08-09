@@ -179,7 +179,9 @@ def step_telegram(data: dict) -> None:
     env_set("TG_API_HASH", ask("TG_API_HASH", env_get("TG_API_HASH") or ""))
     session_file = ask("session file path", f"{data['store_dir']}/telethon.session")
     upsert_source(data, {"type": "telegram", "enabled": True, "session_file": session_file,
-                         "max_dialogs": 40, "max_messages_per_dialog": 300})
+                         "max_dialogs": 40, "max_messages_per_dialog": 300,
+                         "require_my_participation": yes(
+                             "only harvest chats you actively wrote in (recommended)?")})
     if yes("run interactive Telegram login now (SMS/2FA prompt)?"):
         from telethon.sync import TelegramClient
         with TelegramClient(session_file, int(env_get("TG_API_ID")), env_get("TG_API_HASH")) as c:
