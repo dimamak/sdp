@@ -244,15 +244,29 @@ def step_whatsapp(data: dict) -> None:
     key = env_get("WAHA_API_KEY") or secrets.token_hex(24)
     env_set("WAHA_API_KEY", key)
     port = ask("webhook port (localhost)", "8477")
+
+    def first_free(start: int) -> int:
+        import socket
+        p = start
+        while p < start + 100:
+            with socket.socket() as s:
+                try:
+                    s.bind(("127.0.0.1", p))
+                    return p
+                except OSError:
+                    p += 1
+        return start
+
+    waha_port = int(ask("WAHA API host port (localhost)", str(first_free(3000))))
     upsert_source(data, {"type": "whatsapp", "enabled": True,
-                         "waha_url": "http://127.0.0.1:3000", "webhook_port": int(port)})
+                         "waha_url": f"http://127.0.0.1:{waha_port}", "webhook_port": int(port)})
     compose = REPO / "server" / "docker" / "waha.compose.yml"
-    env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port}
+    env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port, "WAHA_PORT": str(waha_port)}
     subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
-    ok("WAHA container up (127.0.0.1:3000)")
+    ok(f"WAHA container up (127.0.0.1:{waha_port})")
     print("  Pair WhatsApp now: from your laptop run")
-    print("    ssh -L 3000:127.0.0.1:3000 <server>")
-    print(f"  open http://localhost:3000/dashboard (API key: {key[:8]}…), start the 'default'")
+    print(f"    ssh -L {waha_port}:127.0.0.1:{waha_port} <server>")
+    print(f"  open http://localhost:{waha_port}/dashboard (API key: {key[:8]}…), start the 'default'")
     print("  session and scan the QR from WhatsApp → Linked devices.")
     print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
 

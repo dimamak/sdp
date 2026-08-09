@@ -8,7 +8,7 @@ services:
     container_name: dailypost-waha
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${WAHA_PORT:-3000}:3000"
     environment:
       - WHATSAPP_DEFAULT_ENGINE=WEBJS
       - WAHA_API_KEY=${WAHA_API_KEY}
