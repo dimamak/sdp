@@ -5,7 +5,7 @@
 services:
   waha:
     image: devlikeapro/waha:latest
-    container_name: dailypost-waha
+    container_name: ${WAHA_CONTAINER:-dailypost-waha}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${WAHA_PORT:-3000}:3000"

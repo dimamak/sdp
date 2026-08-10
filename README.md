@@ -49,6 +49,32 @@ The wizard handles: directories, venv, cron, systemd bot service, Telegram login
 (Telethon), bot chat-id detection, WAHA docker + QR pairing, Gmail OAuth guidance,
 LinkedIn OAuth guidance. Every step is re-runnable: `python -m setup.wizard --source telegram`.
 
+## Several people on one server
+
+Each person gets their own instance: separate config, secrets, store, Telegram
+bot, LinkedIn token, cron entry, bot service and WAHA container. Shared code and
+venv, no interference.
+
+On the server, for each additional person:
+
+```bash
+.venv/bin/python -m setup.wizard --instance alice
+```
+
+Everything lands in `instances/alice/` and the wizard installs
+`dailypost-bot@alice` plus a cron line carrying `DAILYPOST_CONFIG`. Health check
+and single steps take the same flag:
+
+```bash
+.venv/bin/python -m setup.wizard --instance alice --doctor
+```
+
+On a shared multi-user coding host, each instance's `claude_sessions` filter
+selects only that person's sessions (their own username in the SQL filter), and
+each person runs the laptop wizard on their own machine pointing at their own
+ingest dir. Note that instances share the run-as user, so anyone with that user's
+shell can read every instance's store — separate Linux users if that matters.
+
 ## Configuration
 
 Copy `config.example.yaml` → `config.yaml` and `.env.example` → `.env` (the wizard

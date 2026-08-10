@@ -1,0 +1,22 @@
+# Multi-instance bot service: one per person sharing a server install.
+# Installed by the setup wizard as /etc/systemd/system/dailypost-bot@.service
+# (placeholders __APP_DIR__ / __USER__ are substituted at install time).
+# Start with:  systemctl enable --now dailypost-bot@<instance>
+[Unit]
+Description=dailypost approval bot (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment=DAILYPOST_CONFIG=__APP_DIR__/instances/%i/config.yaml
+ExecStart=__APP_DIR__/.venv/bin/python -m server.bot.main
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

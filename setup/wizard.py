@@ -23,8 +23,31 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+# Default (single-user) layout. `--instance NAME` switches everything to
+# instances/NAME/ so several people can share one server install: separate config,
+# secrets, store, cron entry, bot service and WAHA container per person.
+INSTANCE: str | None = None
 CONFIG = REPO / "config.yaml"
 ENV = REPO / ".env"
+
+
+def use_instance(name: str | None) -> None:
+    global INSTANCE, CONFIG, ENV
+    INSTANCE = name
+    if name:
+        d = REPO / "instances" / name
+        d.mkdir(parents=True, exist_ok=True)
+        CONFIG, ENV = d / "config.yaml", d / ".env"
+    else:
+        CONFIG, ENV = REPO / "config.yaml", REPO / ".env"
+
+
+def unit_name() -> str:
+    return f"dailypost-bot@{INSTANCE}" if INSTANCE else "dailypost-bot"
+
+
+def waha_container() -> str:
+    return f"dailypost-waha-{INSTANCE}" if INSTANCE else "dailypost-waha"
 
 GREEN, RED, YELLOW, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[0m"
 
@@ -121,7 +144,8 @@ def upsert_source(data: dict, src: dict) -> None:
 
 def step_base(data: dict) -> None:
     print("\n== Base ==")
-    data["install_root"] = ask("install root", data.get("install_root", "/opt/dailypost"))
+    suffix = f"/{INSTANCE}" if INSTANCE else ""
+    data["install_root"] = ask("install root", data.get("install_root", f"/opt/dailypost{suffix}"))
     root = data["install_root"]
     data["store_dir"] = ask("store dir", data.get("store_dir", f"{root}/data"))
     data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir", f"{root}/ingest"))
@@ -299,9 +323,12 @@ def step_whatsapp(data: dict) -> None:
 
     upsert_source(data, {"type": "whatsapp", "enabled": True,
                          "waha_url": f"http://127.0.0.1:{waha_port}",
-                         "webhook_port": int(port), "webhook_host": gw})
+                         "webhook_port": int(port), "webhook_host": gw,
+                         "container_name": waha_container()})
     compose = REPO / "server" / "docker" / "waha.compose.yml"
-    env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port, "WAHA_PORT": str(waha_port)}
+    env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port,
+           "WAHA_PORT": str(waha_port), "WAHA_CONTAINER": waha_container(),
+           "COMPOSE_PROJECT_NAME": waha_container()}
     subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
     ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable from the internet)")
     print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
@@ -409,8 +436,9 @@ def step_linkedin(data: dict) -> None:
 
 def step_cron(data: dict) -> None:
     print("\n== Cron ==")
-    tag = "# dailypost-nightly"
-    line = (f"{data['pipeline']['cron_utc']} {REPO}/server/run_nightly.sh "
+    tag = f"# dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
+    env = f"DAILYPOST_CONFIG={CONFIG} " if INSTANCE else ""
+    line = (f"{data['pipeline']['cron_utc']} {env}{REPO}/server/run_nightly.sh "
             f">> {data['logs_dir']}/nightly.log 2>&1 {tag}")
     cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     lines = [l for l in (cur.stdout.splitlines() if cur.returncode == 0 else []) if tag not in l]
@@ -422,9 +450,10 @@ def step_cron(data: dict) -> None:
 
 def step_systemd(data: dict) -> None:
     print("\n== Bot service (systemd) ==")
-    unit_src = (REPO / "server" / "systemd" / "dailypost-bot.service").read_text()
+    src_name = "dailypost-bot@.service" if INSTANCE else "dailypost-bot.service"
+    unit_src = (REPO / "server" / "systemd" / src_name).read_text()
     unit = unit_src.replace("__APP_DIR__", str(REPO)).replace("__USER__", data["run_as_user"])
-    target = Path("/etc/systemd/system/dailypost-bot.service")
+    target = Path(f"/etc/systemd/system/{src_name}")
     try:
         if os.geteuid() == 0:
             target.write_text(unit)
@@ -433,8 +462,8 @@ def step_systemd(data: dict) -> None:
                            check=True, stdout=subprocess.DEVNULL)
         sysctl = ["systemctl"] if os.geteuid() == 0 else ["sudo", "systemctl"]
         subprocess.run([*sysctl, "daemon-reload"], check=True)
-        subprocess.run([*sysctl, "enable", "--now", "dailypost-bot"], check=True)
-        ok("dailypost-bot service enabled + started")
+        subprocess.run([*sysctl, "enable", "--now", unit_name()], check=True)
+        ok(f"{unit_name()} service enabled + started")
     except Exception as e:
         bad(f"systemd install failed ({e}); unit content written to {REPO / 'dailypost-bot.service.generated'}")
         (REPO / "dailypost-bot.service.generated").write_text(unit)
@@ -524,7 +553,7 @@ def doctor() -> int:
                 messages are dropped with no error anywhere."""
                 url = hooks_url = f"http://{s.get('webhook_host', '127.0.0.1')}:{s.get('webhook_port', 8477)}/health"
                 out = subprocess.run(
-                    ["docker", "exec", "dailypost-waha", "sh", "-c",
+                    ["docker", "exec", s.get("container_name", "dailypost-waha"), "sh", "-c",
                      f"wget -qO- --timeout=5 {url.replace('127.0.0.1', 'host.docker.internal')}"],
                     capture_output=True, text=True, timeout=20)
                 if "ok" not in out.stdout:
@@ -556,13 +585,14 @@ def doctor() -> int:
 
     def _cron():
         out = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-        if "dailypost-nightly" not in out.stdout:
+        tag = f"dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
+        if tag not in out.stdout:
             raise RuntimeError("nightly cron entry missing")
         return "installed"
     check("cron", _cron)
 
     def _svc():
-        out = subprocess.run(["systemctl", "is-active", "dailypost-bot"], capture_output=True, text=True)
+        out = subprocess.run(["systemctl", "is-active", unit_name()], capture_output=True, text=True)
         if out.stdout.strip() != "active":
             raise RuntimeError(out.stdout.strip() or "not installed")
         return "active"
@@ -661,7 +691,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--doctor", action="store_true")
     ap.add_argument("--source", choices=sorted(STEPS), help="run a single step")
+    ap.add_argument("--instance", default=os.environ.get("DAILYPOST_INSTANCE"),
+                    help="name a separate instance (own config, store, bot, cron) "
+                         "so several people can share one server install")
     args = ap.parse_args(argv)
+    use_instance(args.instance)
+    if args.instance:
+        print(f"instance: {args.instance}  ({CONFIG})")
 
     if args.doctor:
         return doctor()
@@ -686,8 +722,13 @@ def main(argv=None) -> int:
                 continue
         STEPS[name](data)
         save_data(data)
-    print("\nSetup complete. Run health check:  python -m setup.wizard --doctor")
-    print("Manual first run:                  server/run_nightly.sh --dry-run")
+    inst = f" --instance {INSTANCE}" if INSTANCE else ""
+    print(f"\nSetup complete. Run health check:  python -m setup.wizard{inst} --doctor")
+    if INSTANCE:
+        print(f"Manual first run:                  DAILYPOST_CONFIG={CONFIG} "
+              "server/run_nightly.sh --dry-run")
+    else:
+        print("Manual first run:                  server/run_nightly.sh --dry-run")
     return 0
 
 
