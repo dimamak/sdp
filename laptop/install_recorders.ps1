@@ -40,6 +40,65 @@ if (-not $NoAudio -and -not (Install-Ffmpeg)) {
     $NoAudio = $true
 }
 
+function Initialize-MicInterop {
+    if ("DailypostMic" -as [type]) { return }
+    Add-Type -TypeDefinition @"
+using System;using System.Runtime.InteropServices;
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator{int EnumAudioEndpoints(int d,int m,out IntPtr c);int GetDefaultAudioEndpoint(int d,int r,out IMMDevice e);}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice{int Activate(ref Guid id,int ctx,IntPtr p,[MarshalAs(UnmanagedType.IUnknown)]out object o);}
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume{
+ int RegisterControlChangeNotify(IntPtr n);int UnregisterControlChangeNotify(IntPtr n);
+ int GetChannelCount(out uint c);int SetMasterVolumeLevel(float l,ref Guid g);
+ int SetMasterVolumeLevelScalar(float l,ref Guid g);int GetMasterVolumeLevel(out float l);
+ int GetMasterVolumeLevelScalar(out float l);int SetChannelVolumeLevel(uint i,float l,ref Guid g);
+ int SetChannelVolumeLevelScalar(uint i,float l,ref Guid g);int GetChannelVolumeLevel(uint i,out float l);
+ int GetChannelVolumeLevelScalar(uint i,out float l);int SetMute([MarshalAs(UnmanagedType.Bool)]bool m,ref Guid g);
+ int GetMute([MarshalAs(UnmanagedType.Bool)]out bool m);}
+[ComImport,Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject{}
+public class DailypostMic{
+ static IAudioEndpointVolume Vol(){
+  var e=(IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+  IMMDevice dev; e.GetDefaultAudioEndpoint(1,1,out dev);   // eCapture, eMultimedia
+  Guid iid=typeof(IAudioEndpointVolume).GUID; object o;
+  dev.Activate(ref iid,1,IntPtr.Zero,out o); return (IAudioEndpointVolume)o;}
+ public static bool IsMuted(){bool m; Vol().GetMute(out m); return m;}
+ public static int Volume(){float l; Vol().GetMasterVolumeLevelScalar(out l); return (int)(l*100);}
+ public static void Unmute(){Guid g=Guid.Empty; var v=Vol(); v.SetMute(false,ref g);
+  float l; v.GetMasterVolumeLevelScalar(out l); if(l<0.5f) v.SetMasterVolumeLevelScalar(0.8f,ref g);}}
+"@
+}
+
+if (-not $NoAudio) {
+    # A muted mic records perfectly valid, perfectly empty files - capture looks
+    # healthy while nothing is heard. Check it here rather than days later.
+    try {
+        Initialize-MicInterop
+        if ([DailypostMic]::IsMuted()) {
+            Write-Host ""
+            Write-Host "Your default microphone is currently MUTED (volume $([DailypostMic]::Volume())%)." -ForegroundColor Yellow
+            Write-Host "The recorder would capture silence and delete every segment."
+            $unmute = Read-Host "unmute the microphone now? [y/N]"
+            if ($unmute -eq "y") {
+                [DailypostMic]::Unmute()
+                if ([DailypostMic]::IsMuted()) {
+                    Write-Host "still muted - there may be a hardware mic-mute key (often F9)" -ForegroundColor Yellow
+                } else {
+                    Write-Host "microphone unmuted (volume $([DailypostMic]::Volume())%)" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "left muted - unmute later with the mic key or Sound settings."
+            }
+        } else {
+            Write-Host "microphone is live (volume $([DailypostMic]::Volume())%)" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "could not read microphone state: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 function ConvertTo-BashPath([string]$p) {
     $p = $p -replace "\\", "/"
     if ($p -match "^([A-Za-z]):(.*)$") { return "/" + $Matches[1].ToLower() + $Matches[2] }
