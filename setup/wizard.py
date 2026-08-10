@@ -434,6 +434,69 @@ def step_linkedin(data: dict) -> None:
         print("  Later: python -m setup.wizard --source linkedin  (or python -m server.bot.linkedin_auth)")
 
 
+def step_laptop(data: dict) -> None:
+    """Authorize the person's laptop key and print exactly what to run there."""
+    print("\n== Laptop access ==")
+    user = data["run_as_user"]
+    ingest = f"{data['ingest_dir']}/laptop"
+
+    host = data.get("ssh_host")
+    if not host:
+        guess = subprocess.run("curl -s --max-time 5 ifconfig.me", shell=True,
+                               capture_output=True, text=True).stdout.strip()
+        host = ask("hostname or IP the laptop will ssh to", guess or "")
+        data["ssh_host"] = host
+
+    print("  Paste the laptop's SSH PUBLIC key (from `cat ~/.ssh/id_ed25519.pub`).")
+    print("  If they have no key yet, they run: ssh-keygen -t ed25519")
+    pub = ask("public key (empty = skip)")
+    if pub:
+        if not pub.startswith(("ssh-", "ecdsa-")):
+            bad("that doesn't look like a public key — skipping")
+        else:
+            try:
+                import pwd
+                pw = pwd.getpwnam(user)
+                ssh_dir = Path(pw.pw_dir) / ".ssh"
+                ssh_dir.mkdir(mode=0o700, exist_ok=True)
+                keys = ssh_dir / "authorized_keys"
+                existing = keys.read_text() if keys.exists() else ""
+                if pub.split()[1] in existing:
+                    ok("key already authorized")
+                else:
+                    keys.write_text(existing + ("" if existing.endswith("\n") or not existing else "\n")
+                                    + pub.strip() + "\n")
+                    keys.chmod(0o600)
+                    if os.geteuid() == 0:
+                        os.chown(ssh_dir, pw.pw_uid, pw.pw_gid)
+                        os.chown(keys, pw.pw_uid, pw.pw_gid)
+                    ok(f"key authorized for {user}@{host}")
+            except PermissionError:
+                bad(f"cannot write {user}'s authorized_keys — run this step as root")
+            except KeyError:
+                bad(f"no such user: {user}")
+
+    print(f"""
+  ---------------- run this ON THE LAPTOP ----------------
+  1. Add to ~/.ssh/config (Git Bash: notepad ~/.ssh/config):
+
+       Host dailypost
+           HostName {host}
+           User {user}
+
+  2. Clone and run the laptop wizard:
+
+       git clone <this repo> dailypost && cd dailypost
+       powershell -ExecutionPolicy Bypass -File setup\\wizard_laptop.ps1
+
+  3. Answer it with:
+       ssh host alias .............. dailypost
+       remote ingest dir ........... {ingest}
+       user that runs dailypost .... {user}
+       screenshots folder .......... (their screenshot folder, or empty)
+  --------------------------------------------------------""")
+
+
 def step_cron(data: dict) -> None:
     print("\n== Cron ==")
     tag = f"# dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
@@ -605,8 +668,8 @@ def doctor() -> int:
 STEPS = {
     "base": step_base, "claude": step_claude, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
-    "pair": step_pair, "linkedin": step_linkedin, "cron": step_cron,
-    "systemd": step_systemd,
+    "pair": step_pair, "linkedin": step_linkedin, "laptop": step_laptop,
+    "cron": step_cron, "systemd": step_systemd,
 }
 
 
@@ -679,11 +742,15 @@ def _done_systemd(data):
         return "service active"
 
 
+def _done_laptop(data):
+    return None  # always offer it: it prints the laptop instructions
+
+
 DONE_PROBES = {
     "base": _done_base, "claude": _done_claude, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
-    "pair": _done_pair, "linkedin": _done_linkedin, "cron": _done_cron,
-    "systemd": _done_systemd,
+    "pair": _done_pair, "linkedin": _done_linkedin, "laptop": _done_laptop,
+    "cron": _done_cron, "systemd": _done_systemd,
 }
 
 
@@ -695,9 +762,21 @@ def main(argv=None) -> int:
                     help="name a separate instance (own config, store, bot, cron) "
                          "so several people can share one server install")
     args = ap.parse_args(argv)
-    use_instance(args.instance)
-    if args.instance:
-        print(f"instance: {args.instance}  ({CONFIG})")
+
+    instance = args.instance
+    if instance is None and not args.doctor and not args.source:
+        # several people can share one server install — each gets their own
+        # config, store, bot, cron and WAHA container under instances/<name>/
+        print("=== dailypost setup wizard ===")
+        existing = sorted(p.name for p in (REPO / "instances").glob("*")
+                          if (p / "config.yaml").exists()) if (REPO / "instances").exists() else []
+        if existing:
+            print(f"existing instances: {', '.join(existing)}")
+        instance = ask("who is this setup for? (short name, e.g. alice; "
+                       "empty = this server's default instance)") or None
+    use_instance(instance)
+    if instance:
+        print(f"instance: {instance}  ({CONFIG})")
 
     if args.doctor:
         return doctor()
@@ -708,10 +787,9 @@ def main(argv=None) -> int:
         save_data(data)
         return 0
 
-    print("=== dailypost setup wizard ===")
     print("(steps already completed are skipped — answer y to redo one)")
     for name in ("base", "claude", "telegram", "bot", "gmail", "whatsapp", "pair",
-                 "linkedin", "cron", "systemd"):
+                 "linkedin", "laptop", "cron", "systemd"):
         done = None
         try:
             done = DONE_PROBES[name](data)
@@ -723,12 +801,18 @@ def main(argv=None) -> int:
         STEPS[name](data)
         save_data(data)
     inst = f" --instance {INSTANCE}" if INSTANCE else ""
-    print(f"\nSetup complete. Run health check:  python -m setup.wizard{inst} --doctor")
+    print("\n" + "=" * 60)
+    print(f"Server setup complete{f' for {INSTANCE}' if INSTANCE else ''}.")
+    print(f"  health check:    python -m setup.wizard{inst} --doctor")
     if INSTANCE:
-        print(f"Manual first run:                  DAILYPOST_CONFIG={CONFIG} "
-              "server/run_nightly.sh --dry-run")
+        print(f"  manual run:      DAILYPOST_CONFIG={CONFIG} server/run_nightly.sh --dry-run")
+        print(f"  bot service:     systemctl status {unit_name()}")
     else:
-        print("Manual first run:                  server/run_nightly.sh --dry-run")
+        print("  manual run:      server/run_nightly.sh --dry-run")
+    print(f"\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
+    print(f"or re-print it any time with:")
+    print(f"  python -m setup.wizard{inst} --source laptop")
+    print("=" * 60)
     return 0
 
 
