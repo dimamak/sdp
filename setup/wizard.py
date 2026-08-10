@@ -150,7 +150,15 @@ def step_base(data: dict) -> None:
     data["store_dir"] = ask("store dir", data.get("store_dir", f"{root}/data"))
     data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir", f"{root}/ingest"))
     data["logs_dir"] = ask("logs dir", data.get("logs_dir", f"{root}/logs"))
-    data["run_as_user"] = ask("run-as user", data.get("run_as_user", os.environ.get("USER", "app")))
+    # Never default to root: this user owns the store, the credentials and the bot
+    # process. Prefer an existing non-root default, or whoever invoked sudo.
+    default_user = data.get("run_as_user") or os.environ.get("SUDO_USER") or os.environ.get("USER", "")
+    if default_user in ("", "root"):
+        default_user = "dailypost"
+    data["run_as_user"] = ask("run-as user (non-root; owns the store and runs the bot)",
+                              default_user)
+    if data["run_as_user"] == "root":
+        warn("running as root is not recommended — the store holds transcripts and tokens")
     pl = data.setdefault("pipeline", {})
     pl["timezone"] = ask("timezone", pl.get("timezone", "UTC"))
     pl["cron_utc"] = ask("nightly cron (UTC, crontab syntax)", pl.get("cron_utc", "30 0 * * *"))
