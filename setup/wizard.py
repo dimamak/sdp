@@ -423,8 +423,19 @@ def step_whatsapp(data: dict) -> None:
         out = subprocess.run(["docker", "port", reuse, "3000"], capture_output=True, text=True)
         waha_port = int(out.stdout.strip().rsplit(":", 1)[1])
         container = reuse
-        # the shared container was started with the first instance's key
-        shared_key = ask("WAHA_API_KEY of that container (see its instance .env)", key)
+        # The shared container already runs with a key — read it from the
+        # container's own environment rather than asking for it.
+        found = subprocess.run(
+            ["docker", "inspect", "--format",
+             "{{range .Config.Env}}{{println .}}{{end}}", container],
+            capture_output=True, text=True).stdout
+        shared_key = next((l.split("=", 1)[1] for l in found.splitlines()
+                           if l.startswith("WAHA_API_KEY=")), None)
+        if shared_key:
+            ok("read WAHA_API_KEY from the running container")
+        else:
+            warn("could not read the key from the container")
+            shared_key = ask("WAHA_API_KEY of that container (see its instance .env)", key)
         key = shared_key
         env_set("WAHA_API_KEY", key)
         ok(f"reusing {container} on port {waha_port}, session '{session_name}'")
