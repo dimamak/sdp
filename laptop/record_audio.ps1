@@ -15,7 +15,10 @@
 param(
     [string]$Device = "",                       # dshow audio device; empty = auto-pick
     [string]$OutDir = "$env:USERPROFILE\dailypost\audio",
-    [int]$SegmentSeconds = 600,                 # one file per 10 minutes
+    [int]$SegmentSeconds = 120,                 # one file per 2 minutes: the Ogg
+                                                # muxer only lands data as pages
+                                                # complete, so shorter segments
+                                                # bound what a crash can lose
     [int]$Bitrate = 24,                         # kbps, mono - speech only
     [int]$SilenceThresholdDb = -35,             # below this counts as silence
     [double]$MinSpeechSeconds = 4,              # segments with less speech are deleted
@@ -76,6 +79,30 @@ function Get-SpeechSeconds([string]$file) {
     return [Math]::Max(0.0, $total - $silence)
 }
 
+$script:SilentStreak = 0
+
+function Update-MicWarning([bool]$wasSilent) {
+    # A muted mic produces perfectly valid, perfectly empty files: capture looks
+    # healthy while recording nothing. Surface that instead of failing silently.
+    $flag = Join-Path $OutDir "MIC-PROBABLY-MUTED.txt"
+    if ($wasSilent) {
+        $script:SilentStreak++
+        if ($script:SilentStreak -ge 10 -and -not (Test-Path $flag)) {
+            Set-Content -Path $flag -Encoding ascii -Value @"
+No speech detected in the last $($script:SilentStreak) segments (~$([int]($script:SilentStreak * $SegmentSeconds / 60)) minutes).
+If the office was not silent, the microphone is probably muted:
+  - press the mic-mute key (often F9), or
+  - Settings > System > Sound > Input > unmute the microphone
+This file is removed automatically once speech is detected again.
+"@
+            Write-Host "WARNING: no speech for $($script:SilentStreak) segments - mic may be muted"
+        }
+    } else {
+        $script:SilentStreak = 0
+        Remove-Item $flag -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Remove-SilentSegments {
     # Only look at finished files: the segment muxer is still writing the newest one.
     $cutoff = (Get-Date).AddSeconds(-60)
@@ -87,7 +114,9 @@ function Remove-SilentSegments {
             if ($speech -ge 0 -and $speech -lt $MinSpeechSeconds) {
                 Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
                 Write-Host ("dropped {0} ({1:N1}s speech)" -f $_.Name, $speech)
+                Update-MicWarning $true
             } else {
+                Update-MicWarning $false
                 # mark as checked so it is not re-analysed every loop
                 Rename-Item $_.FullName ($_.BaseName + ".speech.opus") -ErrorAction SilentlyContinue
             }
@@ -108,6 +137,7 @@ while ($true) {
     $ffArgs = '-hide_banner -loglevel error -nostdin ' +
               '-f dshow -i "audio=' + $Device + '" ' +
               '-ac 1 -ar 16000 -c:a libopus -b:a ' + $Bitrate + 'k -application voip ' +
+              '-flush_packets 1 ' +
               '-f segment -segment_time ' + $SegmentSeconds + ' -reset_timestamps 1 -strftime 1 ' +
               '"' + $pattern + '"'
 
