@@ -111,16 +111,12 @@ $recAudio = Read-Host "install the audio recorder? [y/N]"
 $recAct = Read-Host "install the activity recorder? [y/N]"
 
 if ($recAudio -eq "y" -or $recAct -eq "y") {
-    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-        Write-Host "ffmpeg is required. Install it with: winget install Gyan.FFmpeg" -ForegroundColor Yellow
-        Write-Host "then re-run: powershell -ExecutionPolicy Bypass -File laptop\install_recorders.ps1"
-    } else {
-        $recArgs = @{}
-        if ($recAudio -ne "y") { $recArgs["NoAudio"] = $true }
-        if ($recAct -ne "y") { $recArgs["NoActivity"] = $true }
-        & (Join-Path $repoRoot "laptop\install_recorders.ps1") @recArgs
-        Write-Host "Recorders start automatically at next logon." -ForegroundColor Green
-    }
+    # install_recorders installs ffmpeg itself when the audio recorder is wanted
+    $recArgs = @{}
+    if ($recAudio -ne "y") { $recArgs["NoAudio"] = $true }
+    if ($recAct -ne "y") { $recArgs["NoActivity"] = $true }
+    & (Join-Path $repoRoot "laptop\install_recorders.ps1") @recArgs
+    Write-Host "Recorders start automatically at next logon." -ForegroundColor Green
 }
 
 $test = Read-Host "run a test push now? [Y/n]"

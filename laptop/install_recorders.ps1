@@ -14,8 +14,30 @@ $audioDir = Join-Path $Root "audio"
 $activityDir = Join-Path $Root "activity"
 New-Item -ItemType Directory -Force -Path $audioDir, $activityDir | Out-Null
 
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    throw "ffmpeg not found in PATH - install it first (winget install Gyan.FFmpeg)"
+function Install-Ffmpeg {
+    # Only the audio recorder needs ffmpeg; the activity recorder uses .NET and Win32.
+    if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { return $true }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "ffmpeg missing and winget unavailable - install from https://ffmpeg.org/download.html" -ForegroundColor Yellow
+        return $false
+    }
+    Write-Host "installing ffmpeg via winget (a minute or two)..."
+    winget install --id Gyan.FFmpeg -e --silent `
+        --accept-source-agreements --accept-package-agreements | Out-Null
+    # winget writes the new PATH to the registry; this session still has the old one
+    $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
+                [Environment]::GetEnvironmentVariable("PATH", "User")
+    if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+        Write-Host "ffmpeg installed" -ForegroundColor Green
+        return $true
+    }
+    Write-Host "ffmpeg installed but not visible yet - open a new terminal and re-run" -ForegroundColor Yellow
+    return $false
+}
+
+if (-not $NoAudio -and -not (Install-Ffmpeg)) {
+    Write-Host "skipping the audio recorder (activity recorder is unaffected)" -ForegroundColor Yellow
+    $NoAudio = $true
 }
 
 function ConvertTo-BashPath([string]$p) {
