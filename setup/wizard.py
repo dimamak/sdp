@@ -972,6 +972,7 @@ def main(argv=None) -> int:
         return 0
 
     print("(steps already completed are skipped — answer y to redo one)")
+    failed = []
     for name in ("base", "claude", "telegram", "bot", "gmail", "whatsapp", "pair",
                  "linkedin", "laptop", "cron", "systemd"):
         done = None
@@ -982,11 +983,25 @@ def main(argv=None) -> int:
         if done:
             if not yes(f"[{name}] already set up ({done}) — redo?", False):
                 continue
-        STEPS[name](data)
+        try:
+            STEPS[name](data)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            # One failing step must not abandon the rest: a crash here used to
+            # skip cron and the bot service entirely, leaving a silent half-setup.
+            bad(f"[{name}] failed: {e}")
+            failed.append(name)
         save_data(data)
     inst = f" --instance {INSTANCE}" if INSTANCE else ""
     print("\n" + "=" * 60)
-    print(f"Server setup complete{f' for {INSTANCE}' if INSTANCE else ''}.")
+    if failed:
+        bad(f"{len(failed)} step(s) failed: {', '.join(failed)}")
+        for f in failed:
+            print(f"  retry: python -m setup.wizard{inst} --source {f}")
+        print("")
+    print(f"Server setup {'finished with errors' if failed else 'complete'}"
+          f"{f' for {INSTANCE}' if INSTANCE else ''}.")
     print(f"  health check:    python -m setup.wizard{inst} --doctor")
     if INSTANCE:
         print(f"  manual run:      DAILYPOST_CONFIG={CONFIG} server/run_nightly.sh --dry-run")
