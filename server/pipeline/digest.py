@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from .claude_cli import run_claude
@@ -17,8 +18,24 @@ from ..util import get_logger, window_start_iso
 log = get_logger("pipeline.digest")
 
 
-def _compress_jsonl(path: Path, per_item_cap: int) -> str:
-    """Reduce a Claude Code session transcript to a readable narrative."""
+def _in_window(rec: dict, since: datetime | None) -> bool:
+    """A session file's mtime says when it was last touched, which can be long
+    after the conversation happened (or when an unrelated tool rewrote it).
+    Only messages actually written inside the window belong in the digest."""
+    if since is None:
+        return True
+    ts = rec.get("timestamp")
+    if not ts:
+        return True  # keep un-timestamped records (e.g. summaries)
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")) >= since
+    except ValueError:
+        return True
+
+
+def _compress_jsonl(path: Path, per_item_cap: int, since: datetime | None = None) -> str:
+    """Reduce a Claude Code session transcript to a readable narrative,
+    keeping only messages written within the harvest window."""
     if not path.exists():
         return ""
     lines_out: list[str] = []
@@ -32,6 +49,8 @@ def _compress_jsonl(path: Path, per_item_cap: int) -> str:
                     continue
                 cwd = rec.get("cwd") or cwd
                 branch = rec.get("gitBranch") or branch
+                if not _in_window(rec, since):
+                    continue
                 msg = rec.get("message") or {}
                 role = msg.get("role")
                 content = msg.get("content")
@@ -53,6 +72,8 @@ def _compress_jsonl(path: Path, per_item_cap: int) -> str:
     except OSError as e:
         log.warning("cannot read %s: %s", path, e)
         return ""
+    if not lines_out:
+        return ""  # touched file, but nothing said inside the window
     header = f"(project: {cwd or path.name}, branch: {branch or '?'})"
     text = header + "\n" + "\n".join(lines_out)
     return text[:per_item_cap]
@@ -100,14 +121,17 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
     per_item_cap = int(cfg.get("pipeline.per_item_max_chars", 4000))
     total_cap = int(cfg.get("pipeline.digest_max_chars", 400000))
 
+    window_start = datetime.fromisoformat(since_iso)
     sections: dict[str, list[str]] = {}
     ids: list[int] = []
+    skipped_stale = 0
     for item in items:
         ids.append(item["id"])
         src = item["source"]
         if item["kind"] == "claude_jsonl":
-            body = _compress_jsonl(Path(item["path"]), per_item_cap)
+            body = _compress_jsonl(Path(item["path"]), per_item_cap, since=window_start)
             if not body:
+                skipped_stale += 1
                 continue
             entry = f"### Coding session ({src})\n{body}"
         elif item["kind"] == "screenshot":
@@ -125,6 +149,9 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
     for src in sorted(sections):
         parts.append(f"\n## Source: {src}\n")
         parts.extend(sections[src])
+    if skipped_stale:
+        log.info("skipped %d session file(s) touched in-window but with no messages in it",
+                 skipped_stale)
     digest = "\n".join(parts)
     if len(digest) > total_cap:
         digest = digest[:total_cap] + "\n\n[digest truncated at size cap]"
