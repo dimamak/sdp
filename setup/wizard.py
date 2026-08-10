@@ -927,10 +927,25 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--doctor", action="store_true")
     ap.add_argument("--source", choices=sorted(STEPS), help="run a single step")
+    ap.add_argument("--list-instances", action="store_true",
+                    help="print 'name<TAB>ingest_dir<TAB>run_as_user' per instance "
+                         "(used by the laptop wizard to offer the right target)")
     ap.add_argument("--instance", default=os.environ.get("DAILYPOST_INSTANCE"),
                     help="name a separate instance (own config, store, bot, cron) "
                          "so several people can share one server install")
     args = ap.parse_args(argv)
+
+    if args.list_instances:
+        for cfg_file in [REPO / "config.yaml", *sorted((REPO / "instances").glob("*/config.yaml"))]:
+            if not cfg_file.exists():
+                continue
+            try:
+                d = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            name = cfg_file.parent.name if cfg_file.parent.name != REPO.name else "default"
+            print(f"{name}\t{d.get('ingest_dir', '')}/laptop\t{d.get('run_as_user', '')}")
+        return 0
 
     instance = args.instance
     if instance is None and not args.doctor and not args.source:

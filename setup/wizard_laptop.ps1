@@ -18,14 +18,44 @@ $check = ssh -o BatchMode=yes -o ConnectTimeout=10 $remote "echo ok" 2>$null
 if ($check -ne "ok") { throw "ssh to '$remote' failed non-interactively - set up key auth first" }
 Write-Host "ssh OK" -ForegroundColor Green
 
-$remoteDir = Read-Host "remote ingest dir [default /opt/dailypost/ingest/laptop]"
-if (-not $remoteDir) { $remoteDir = "/opt/dailypost/ingest/laptop" }
+# Ask the server which instances exist rather than guessing a path: on a shared
+# server the default ingest dir belongs to whoever was set up FIRST, and pushing
+# there would file this laptop's files into someone else's store.
+$appDir = Read-Host "dailypost app dir on the server [default /opt/dailypost/app]"
+if (-not $appDir) { $appDir = "/opt/dailypost/app" }
+
+$remoteDir = ""
+$runUser = ""
+$rows = @(ssh -o BatchMode=yes $remote "cd '$appDir' && ./.venv/bin/python -m setup.wizard --list-instances" 2>$null |
+          Where-Object { $_ -match "`t" })
+if ($rows.Count -ge 1) {
+    Write-Host "instances on $remote :"
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+        $f = $rows[$i] -split "`t"
+        Write-Host ("  [{0}] {1}  ->  {2}  (runs as {3})" -f ($i + 1), $f[0], $f[1], $f[2])
+    }
+    $pick = Read-Host "which instance is this laptop for? [1-$($rows.Count), default 1]"
+    if (-not $pick) { $pick = 1 }
+    $sel = $rows[[int]$pick - 1] -split "`t"
+    $remoteDir = $sel[1]
+    $runUser = $sel[2]
+    Write-Host "using $remoteDir (owner $runUser)" -ForegroundColor Green
+} else {
+    Write-Host "could not list instances - falling back to manual entry." -ForegroundColor Yellow
+}
+
+if (-not $remoteDir) {
+    $remoteDir = Read-Host "remote ingest dir [default /opt/dailypost/ingest/laptop]"
+    if (-not $remoteDir) { $remoteDir = "/opt/dailypost/ingest/laptop" }
+}
 
 # Files arrive owned by whoever ssh connects as. If the pipeline runs as a
 # different user it won't be able to drain the spool, so hand ownership over.
 $sshUser = (ssh -o BatchMode=yes $remote "whoami").Trim()
-$runUser = Read-Host "user that runs dailypost on the server [default $sshUser]"
-if (-not $runUser) { $runUser = $sshUser }
+if (-not $runUser) {
+    $runUser = Read-Host "user that runs dailypost on the server [default $sshUser]"
+    if (-not $runUser) { $runUser = $sshUser }
+}
 if ($runUser -ne $sshUser) {
     $postCmd = "chown -R ${runUser}: '$remoteDir'"
     Write-Host "ssh connects as '$sshUser' but the pipeline runs as '$runUser' - pushes will chown automatically."
