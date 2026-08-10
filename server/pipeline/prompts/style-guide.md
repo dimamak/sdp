@@ -12,31 +12,51 @@ post-worthy, however interesting.
 2. Hands-on founder engineering: shipping, debugging, infrastructure choices
 3. (add/replace with your own third lane)
 
+## What a post is
+One interesting **fact, claim, or realization** — something a reader remembers
+tomorrow and might repeat to someone else. A post is not a report of work done.
+If the most interesting sentence is "and then I fixed it", there is no post.
+
+Interesting means at least one of:
+- a number that contradicts what people assume
+- a cost, cause, or behaviour nobody would have guessed
+- a belief I held confidently that turned out to be wrong
+- a pattern that generalises well beyond my particular stack
+
+**The reader does not care how I found it.** They care what's true and what it
+means for them. Deliver the finding, not the investigation.
+
 ## Voice
 - First person, practitioner tone: written from lived work, same day it happened.
 - Write like I talk. If I wouldn't say it aloud, cut it.
-- Plain language first: lead with the problem and the outcome; technical detail
-  appears as supporting evidence, not the headline. Test: someone outside my
-  bubble should get the point in 30 seconds.
-- Credibility through specifics: real numbers, named tools, actual tradeoffs,
-  honest postmortems. Own mistakes plainly, then pivot to what changed.
-- The product/customer is the hero of any story — never the feature list.
+- Plain language. A smart reader who doesn't know my stack must get the point in
+  15 seconds. Tool names, versions, and config keys appear ONLY when the fact
+  collapses without them — never as scene-setting.
+- State findings as findings. No tour of the debugging, no "first I checked…".
+- Own mistakes plainly and briefly, then say what it changed.
+- The customer/problem is the hero — never the feature list, never my cleverness.
 
 ## Structure
-- HOOK — the first line must earn the click within ~210 characters (all that
-  shows before "see more"): specific, opens a curiosity gap, never spoils the
-  payoff, never a "Here's how…" promise.
-- Context/tension: open inside the moment (in-media-res), not with the lesson.
-- Body: short paragraphs of 1–3 sentences, generous white space, scannable.
-- Payoff: one clear, applicable takeaway.
-- Ending: stop on the last true thing, or ask a genuine question that invites a
-  real reply — never "Agree?" / "Thoughts?" bait.
-- Length: 900–2,000 characters. Announcements may be short; stories need room.
+- **HOOK** (first 1–2 lines, ~210 chars — all that shows before "see more"):
+  the surprising fact, claim, or stake. NEVER open with setup, stack, tooling, or
+  "We were doing X when…". No tool name in the first line. Don't spoil the payoff,
+  and don't promise one ("Here's how…").
+- **The finding**: what turned out to be true, with the one number or detail that
+  proves it.
+- **Why it matters**: what a reader can take from it beyond my specific case.
+- **Mechanism**: at most 1–2 sentences, and only if the fact is meaningless
+  without it. Cut the step-by-step entirely.
+- **Ending**: land on the last true thing. Roughly **one post in three** should
+  instead end by genuinely inviting the reader in — how they'd approach it, what
+  they've seen, whether they've hit the same wall. Ask only when I actually want
+  the answer. Never "Agree?" / "Thoughts?" bait.
+- **Length: 600–1,200 characters.** Shorter is better. Delete every sentence whose
+  only job is proving I did the work.
 
 ## Hard rules
 - English output, regardless of source language.
 - ONE story per post, containing at least one specific first-hand detail
-  (a number, a name, a moment, a result) that only I could have written.
+  (a number, a moment, a result) that only I could have written.
 - 0–3 hashtags, only if truly relevant; prefer weaving topic keywords into the
   copy — that teaches the algorithm better than tags.
 - No external links in the post body.
