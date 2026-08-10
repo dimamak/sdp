@@ -109,7 +109,7 @@ def env_get(key: str) -> str | None:
 
 def fix_owner(data: dict, *paths) -> None:
     """When the wizard runs as root, hand provisioned files to the run-as user —
-    otherwise the pipeline/bot (running as that user) can't read them."""
+    otherwise the pipeline/bot (running as that user) can't read or write them."""
     user = data.get("run_as_user")
     if not user or os.geteuid() != 0:
         return
@@ -120,8 +120,23 @@ def fix_owner(data: dict, *paths) -> None:
         return
     for p in paths:
         p = Path(os.path.expanduser(str(p)))
-        if p.exists():
-            os.chown(p, pw.pw_uid, pw.pw_gid)
+        if not p.exists():
+            continue
+        os.chown(p, pw.pw_uid, pw.pw_gid)
+        if p.is_dir():  # dirs are created empty here, but be safe on re-runs
+            for child in p.rglob("*"):
+                try:
+                    os.chown(child, pw.pw_uid, pw.pw_gid)
+                except OSError:
+                    pass
+
+
+def crontab_cmd(data: dict, *args) -> list[str]:
+    """Edit the run-as user's crontab, not root's, when the wizard runs as root."""
+    user = data.get("run_as_user")
+    if user and os.geteuid() == 0 and user != "root":
+        return ["crontab", "-u", user, *args]
+    return ["crontab", *args]
 
 
 def get_source(data: dict, type_: str) -> dict | None:
@@ -162,9 +177,13 @@ def step_base(data: dict) -> None:
     pl = data.setdefault("pipeline", {})
     pl["timezone"] = ask("timezone", pl.get("timezone", "UTC"))
     pl["cron_utc"] = ask("nightly cron (UTC, crontab syntax)", pl.get("cron_utc", "30 0 * * *"))
-    for d in (data["store_dir"], f"{data['ingest_dir']}/laptop", data["logs_dir"]):
+    dirs = [data["store_dir"], f"{data['ingest_dir']}/laptop", data["logs_dir"]]
+    for d in dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
-    ok("directories created")
+    # created as root when the wizard needs root for systemd; hand them to the
+    # user that actually runs the pipeline, or nothing can write the store
+    fix_owner(data, *dirs, data["install_root"], CONFIG, ENV)
+    ok(f"directories created (owner: {data['run_as_user']})")
     venv = REPO / ".venv"
     if not venv.exists():
         print("  creating venv + installing requirements...")
@@ -511,12 +530,12 @@ def step_cron(data: dict) -> None:
     env = f"DAILYPOST_CONFIG={CONFIG} " if INSTANCE else ""
     line = (f"{data['pipeline']['cron_utc']} {env}{REPO}/server/run_nightly.sh "
             f">> {data['logs_dir']}/nightly.log 2>&1 {tag}")
-    cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    cur = subprocess.run(crontab_cmd(data, "-l"), capture_output=True, text=True)
     lines = [l for l in (cur.stdout.splitlines() if cur.returncode == 0 else []) if tag not in l]
     lines.append(line)
-    subprocess.run(["crontab", "-"], input="\n".join(lines) + "\n", text=True, check=True)
+    subprocess.run(crontab_cmd(data, "-"), input="\n".join(lines) + "\n", text=True, check=True)
     os.chmod(REPO / "server" / "run_nightly.sh", 0o755)
-    ok(f"crontab installed: {line}")
+    ok(f"crontab installed for {data['run_as_user']}: {line}")
 
 
 def step_systemd(data: dict) -> None:
@@ -655,7 +674,7 @@ def doctor() -> int:
     check("linkedin", _li)
 
     def _cron():
-        out = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        out = subprocess.run(crontab_cmd(cfg.data, "-l"), capture_output=True, text=True)
         tag = f"dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
         if tag not in out.stdout:
             raise RuntimeError("nightly cron entry missing")
@@ -739,7 +758,7 @@ def _done_linkedin(data):
 
 
 def _done_cron(data):
-    out = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    out = subprocess.run(crontab_cmd(data, "-l"), capture_output=True, text=True)
     if "dailypost-nightly" in out.stdout:
         return "nightly entry installed"
 
