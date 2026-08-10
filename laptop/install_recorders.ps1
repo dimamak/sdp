@@ -98,8 +98,13 @@ $conf = Join-Path $scriptDir "push.conf"
 if (Test-Path $conf) {
     $lines = [System.IO.File]::ReadAllLines($conf)
     $add = @()
-    if ($lines -notmatch "PUSH_PATH=audio\|") { $add += "PUSH_PATH=audio|$(ConvertTo-BashPath $audioDir)|*.opus" }
-    if ($lines -notmatch "PUSH_PATH=activity\|") { $add += "PUSH_PATH=activity|$(ConvertTo-BashPath $activityDir)|*" }
+    # NOTE: `$array -notmatch "x"` returns the non-matching ELEMENTS (truthy when
+    # any other line exists), so it can't be used as an existence test - that
+    # silently appended a duplicate PUSH_PATH on every run.
+    $hasAudio = @($lines | Where-Object { $_ -like "PUSH_PATH=audio|*" }).Count -gt 0
+    $hasAct = @($lines | Where-Object { $_ -like "PUSH_PATH=activity|*" }).Count -gt 0
+    if (-not $NoAudio -and -not $hasAudio) { $add += "PUSH_PATH=audio|$(ConvertTo-BashPath $audioDir)|*.opus" }
+    if (-not $NoActivity -and -not $hasAct) { $add += "PUSH_PATH=activity|$(ConvertTo-BashPath $activityDir)|*" }
     if ($add) {
         [System.IO.File]::WriteAllText($conf, (($lines + $add) -join "`n") + "`n",
                                        (New-Object System.Text.UTF8Encoding $false))

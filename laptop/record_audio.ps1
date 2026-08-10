@@ -16,7 +16,10 @@ param(
     [string]$Device = "",                       # dshow audio device; empty = auto-pick
     [string]$OutDir = "$env:USERPROFILE\dailypost\audio",
     [int]$SegmentSeconds = 600,                 # one file per 10 minutes
-    [int]$Bitrate = 24                          # kbps, mono - speech only
+    [int]$Bitrate = 24,                         # kbps, mono - speech only
+    [int]$SilenceThresholdDb = -35,             # below this counts as silence
+    [double]$MinSpeechSeconds = 4,              # segments with less speech are deleted
+    [switch]$KeepSilent                         # keep every segment (debugging)
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +53,47 @@ Write-Host "pause:            create $OutDir\PAUSED"
 
 $pauseFile = Join-Path $OutDir "PAUSED"
 
+function Get-SpeechSeconds([string]$file) {
+    # One decode pass with silencedetect: total duration minus detected silence.
+    # Cheaper than re-encoding, and it runs once per finished segment.
+    $tmp = Join-Path $env:TEMP ("dp-sd-" + [System.IO.Path]::GetFileNameWithoutExtension($file) + ".txt")
+    $a = '-hide_banner -nostdin -i "' + $file + '" -af silencedetect=noise=' +
+         $SilenceThresholdDb + 'dB:d=1.5 -f null -'
+    $p = Start-Process -FilePath "ffmpeg" -ArgumentList $a -WindowStyle Hidden `
+        -PassThru -Wait -RedirectStandardError $tmp
+    $out = Get-Content $tmp -Raw -ErrorAction SilentlyContinue
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+    if (-not $out) { return -1 }
+    $total = 0.0
+    if ($out -match 'time=(\d+):(\d+):([\d.]+)') {
+        $total = [double]$Matches[1]*3600 + [double]$Matches[2]*60 + [double]$Matches[3]
+    }
+    $silence = 0.0
+    foreach ($m in [regex]::Matches($out, 'silence_duration:\s*([\d.]+)')) {
+        $silence += [double]$m.Groups[1].Value
+    }
+    if ($total -le 0) { return -1 }
+    return [Math]::Max(0.0, $total - $silence)
+}
+
+function Remove-SilentSegments {
+    # Only look at finished files: the segment muxer is still writing the newest one.
+    $cutoff = (Get-Date).AddSeconds(-60)
+    Get-ChildItem (Join-Path $OutDir "*.opus") -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt $cutoff -and $_.Name -notlike "*.speech.opus" } |
+        ForEach-Object {
+            if ($_.Length -eq 0) { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue; return }
+            $speech = Get-SpeechSeconds $_.FullName
+            if ($speech -ge 0 -and $speech -lt $MinSpeechSeconds) {
+                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                Write-Host ("dropped {0} ({1:N1}s speech)" -f $_.Name, $speech)
+            } else {
+                # mark as checked so it is not re-analysed every loop
+                Rename-Item $_.FullName ($_.BaseName + ".speech.opus") -ErrorAction SilentlyContinue
+            }
+        }
+}
+
 while ($true) {
     if (Test-Path $pauseFile) {
         Start-Sleep -Seconds 20
@@ -72,6 +116,7 @@ while ($true) {
     $errLog = Join-Path $OutDir "ffmpeg.log"
     $proc = Start-Process -FilePath "ffmpeg" -ArgumentList $ffArgs `
         -WindowStyle Hidden -PassThru -RedirectStandardError $errLog
+    $lastSweep = Get-Date
     while (-not $proc.HasExited) {
         if (Test-Path $pauseFile) {
             Write-Host "paused - stopping capture"
@@ -79,8 +124,15 @@ while ($true) {
             try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
             break
         }
+        # discard silent segments locally, so a quiet day never reaches the
+        # network or the server at all
+        if (-not $KeepSilent -and ((Get-Date) - $lastSweep).TotalSeconds -ge 60) {
+            try { Remove-SilentSegments } catch { Write-Host "sweep failed: $($_.Exception.Message)" }
+            $lastSweep = Get-Date
+        }
         Start-Sleep -Seconds 3
     }
+    if (-not $KeepSilent) { try { Remove-SilentSegments } catch {} }
     if ($proc.HasExited -and -not (Test-Path $pauseFile)) {
         # device unplugged, sleep/resume, or an ffmpeg error - back off and retry
         Write-Host "capture ended (exit $($proc.ExitCode)) - retrying in 15s"
