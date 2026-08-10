@@ -47,7 +47,33 @@ def unit_name() -> str:
 
 
 def waha_container() -> str:
-    return f"dailypost-waha-{INSTANCE}" if INSTANCE else "dailypost-waha"
+    # docker project/container names must be lowercase
+    return f"dailypost-waha-{INSTANCE.lower()}" if INSTANCE else "dailypost-waha"
+
+
+def ports_used_by_other_instances() -> set[int]:
+    """Ports already claimed by other instances on this server, so a new one
+    never defaults onto a neighbour's WAHA container or webhook listener."""
+    used: set[int] = set()
+    for other in [REPO / "config.yaml", *(REPO / "instances").glob("*/config.yaml")]:
+        if not other.exists() or (CONFIG.exists() and other.resolve() == CONFIG.resolve()):
+            continue
+        try:
+            d = yaml.safe_load(other.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        for s in d.get("sources", []) or []:
+            if s.get("type") != "whatsapp":
+                continue
+            if s.get("webhook_port"):
+                used.add(int(s["webhook_port"]))
+            url = str(s.get("waha_url", ""))
+            if ":" in url.rsplit("/", 1)[-1]:
+                try:
+                    used.add(int(url.rsplit(":", 1)[1]))
+                except ValueError:
+                    pass
+    return used
 
 GREEN, RED, YELLOW, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[0m"
 
@@ -347,29 +373,35 @@ def step_whatsapp(data: dict) -> None:
         return
     key = env_get("WAHA_API_KEY") or secrets.token_hex(24)
     env_set("WAHA_API_KEY", key)
-    port = ask("webhook port (localhost)", "8477")
+
+    taken = ports_used_by_other_instances()
 
     def first_free(start: int) -> int:
         import socket
         p = start
         while p < start + 100:
-            with socket.socket() as s:
-                try:
-                    s.bind(("127.0.0.1", p))
-                    return p
-                except OSError:
-                    p += 1
+            if p not in taken:
+                with socket.socket() as s:
+                    try:
+                        s.bind(("127.0.0.1", p))
+                        return p
+                    except OSError:
+                        pass
+            p += 1
         return start
 
     def current_waha_port() -> int | None:
-        # if our container already runs, keep its port — otherwise a redo of this
+        # if OUR container already runs, keep its port — otherwise a redo of this
         # step would see the port as "busy" (by WAHA itself) and drift to a new one
-        out = subprocess.run(["docker", "port", "dailypost-waha", "3000"],
+        out = subprocess.run(["docker", "port", waha_container(), "3000"],
                              capture_output=True, text=True)
         if out.returncode == 0 and ":" in out.stdout:
             return int(out.stdout.strip().rsplit(":", 1)[1])
         return None
 
+    existing = get_source(data, "whatsapp") or {}
+    port = ask("webhook port (localhost)",
+               str(existing.get("webhook_port") or first_free(8477)))
     default_port = current_waha_port() or first_free(3000)
     waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
 
