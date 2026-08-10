@@ -504,15 +504,34 @@ def doctor() -> int:
         elif t == "whatsapp":
             def _wa(s=src):
                 import requests
-                r = requests.get(f"{s['waha_url']}/api/sessions",
+                r = requests.get(f"{s['waha_url']}/api/sessions/default",
                                  headers={"X-Api-Key": cfg.secret("WAHA_API_KEY") or ""}, timeout=10)
                 r.raise_for_status()
-                sessions = r.json()
-                st = sessions[0]["status"] if sessions else "NO SESSION"
-                if st != "WORKING":
-                    raise RuntimeError(f"session status {st}")
-                return "session WORKING"
+                d = r.json()
+                if d.get("status") != "WORKING":
+                    raise RuntimeError(f"session status {d.get('status')}")
+                # a WORKING session with no webhook captures nothing, silently
+                hooks = (d.get("config") or {}).get("webhooks") or []
+                want = f":{s.get('webhook_port', 8477)}/waha"
+                if not any(want in h.get("url", "") for h in hooks):
+                    raise RuntimeError("session WORKING but our webhook is not registered "
+                                       "— run: python -m setup.wizard --source pair")
+                return "session WORKING, webhook registered"
             check(name, _wa)
+
+            def _wa_reach(s=src):
+                """WAHA runs in a container; if it can't reach our host-side receiver,
+                messages are dropped with no error anywhere."""
+                url = hooks_url = f"http://{s.get('webhook_host', '127.0.0.1')}:{s.get('webhook_port', 8477)}/health"
+                out = subprocess.run(
+                    ["docker", "exec", "dailypost-waha", "sh", "-c",
+                     f"wget -qO- --timeout=5 {url.replace('127.0.0.1', 'host.docker.internal')}"],
+                    capture_output=True, text=True, timeout=20)
+                if "ok" not in out.stdout:
+                    raise RuntimeError(f"WAHA container cannot reach {hooks_url} — set "
+                                       "webhook_host to the docker bridge gateway (172.17.0.1)")
+                return "container can reach the webhook"
+            check(f"{name} delivery", _wa_reach)
 
     def _bot():
         import requests
