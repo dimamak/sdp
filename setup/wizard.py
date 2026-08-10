@@ -474,7 +474,24 @@ def step_laptop(data: dict) -> None:
         host = ask("hostname or IP the laptop will ssh to", guess or "")
         data["ssh_host"] = host
 
-    print("  Paste the laptop's SSH PUBLIC key (from `cat ~/.ssh/id_ed25519.pub`).")
+    # show what's already trusted, so "already set up" is an informed skip
+    try:
+        import pwd
+        keys_file = Path(pwd.getpwnam(user).pw_dir) / ".ssh" / "authorized_keys"
+        entries = [l.split() for l in keys_file.read_text().splitlines()
+                   if l.strip() and not l.startswith("#")] if keys_file.exists() else []
+        if entries:
+            print(f"  Keys already authorized for {user}:")
+            for e in entries:
+                label = e[2] if len(e) > 2 else "(no comment)"
+                print(f"    - {e[0]}  …{e[1][-12:]}  {label}")
+        else:
+            print(f"  No keys authorized for {user} yet.")
+    except (KeyError, PermissionError, OSError) as e:
+        warn(f"cannot read authorized_keys ({e})")
+
+    print("  Paste the laptop's SSH PUBLIC key (from `cat ~/.ssh/id_ed25519.pub`),")
+    print("  or press Enter to skip if their key is already listed above.")
     print("  If they have no key yet, they run: ssh-keygen -t ed25519")
     pub = ask("public key (empty = skip)")
     if pub:
