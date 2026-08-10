@@ -70,6 +70,29 @@ $time = Read-Host "daily push time [default 23:00]"
 if (-not $time) { $time = "23:00" }
 & (Join-Path $repoRoot "laptop\install_task.ps1") -Time $time
 
+# --- optional always-on recorders -------------------------------------------
+Write-Host ""
+Write-Host "Optional: capture office conversations and non-coding screen activity."
+Write-Host "  audio    - always-on room mic, silence stripped and transcribed on the server,"
+Write-Host "             raw audio deleted afterwards. It hears everyone in the room."
+Write-Host "  activity - foreground window log + occasional screenshots (skips IDEs/terminals)."
+Write-Host "  Both pause instantly via a PAUSE-recording.cmd shortcut."
+$recAudio = Read-Host "install the audio recorder? [y/N]"
+$recAct = Read-Host "install the activity recorder? [y/N]"
+
+if ($recAudio -eq "y" -or $recAct -eq "y") {
+    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+        Write-Host "ffmpeg is required. Install it with: winget install Gyan.FFmpeg" -ForegroundColor Yellow
+        Write-Host "then re-run: powershell -ExecutionPolicy Bypass -File laptop\install_recorders.ps1"
+    } else {
+        $recArgs = @{}
+        if ($recAudio -ne "y") { $recArgs["NoAudio"] = $true }
+        if ($recAct -ne "y") { $recArgs["NoActivity"] = $true }
+        & (Join-Path $repoRoot "laptop\install_recorders.ps1") @recArgs
+        Write-Host "Recorders start automatically at next logon." -ForegroundColor Green
+    }
+}
+
 $test = Read-Host "run a test push now? [Y/n]"
 if ($test -ne "n") {
     $bash = @("$env:ProgramFiles\Git\bin\bash.exe", "${env:ProgramFiles(x86)}\Git\bin\bash.exe") |
