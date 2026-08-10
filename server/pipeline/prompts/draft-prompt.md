@@ -37,13 +37,35 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
      and only when the question is real.
    - Target 600–1,200 characters.
 
-5. Before returning, self-check and fix:
+5. Self-check and fix:
    - Does line 1 work as the entire post if nobody clicks "see more"?
    - Could a smart non-specialist explain the point back to me after 15 seconds?
    - Did I delete every sentence that only proves work happened?
-   - Did I run the style guide's AI-tells pass?
 
 6. Also produce up to 2 shorter alternates from different facts if the digest supports them.
+
+7. **FINAL PASS — do this last, on the finished post and every alternate.**
+   Rewrite the text; do not merely inspect it.
+
+   a. **Strip every name.** Go word by word looking for products, vendors,
+      platforms, frameworks, libraries, models, marketplaces, and data sources.
+      Replace each with the generic category from the style guide. The hook and
+      the alternates included. Only names on the style guide's allowed list survive.
+      After this, re-read: does the fact still land without the brand? If it now
+      reads vague, sharpen it with a number or a consequence, not a name.
+
+   b. **De-AI it.** Hunt these and rewrite the whole sentence in plain spoken
+      English — deleting the phrase alone leaves the machine rhythm behind:
+      - "It's not X, it's Y" and every sibling contrast construction
+      - more than one em dash in the post (rewrite as two sentences or a comma)
+      - "Here's how/what/why", tidy rule-of-three lists, symmetrical clause pairs
+      - "thrilled", "humbled", "unlock", "elevate", "delve", "game-changer"
+      - every sentence that could have been written about any company by anyone
+      - uniform sentence length; real speech varies short and long
+
+   c. **Read it aloud in your head.** Any clause you would not say to a colleague
+      over coffee gets rewritten or cut. Then confirm the post is still within
+      600–1,200 characters, and trim if the rewrite pushed it over.
 
 # Output
 
