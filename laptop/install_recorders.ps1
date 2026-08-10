@@ -24,9 +24,27 @@ function ConvertTo-BashPath([string]$p) {
     return $p
 }
 
-function Register-LogonTask([string]$name, [string]$script, [string]$argLine) {
+function Register-LogonTask([string]$name, [string]$script, [string]$outDir) {
     $ps = (Get-Command powershell).Source
-    $taskArgs = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`" $argLine"
+    # PowerShell's -WindowStyle Hidden still leaves a console window when the
+    # process is started by Task Scheduler. Launching through wscript with window
+    # style 0 is the reliable way to get a truly hidden INTERACTIVE process -
+    # and it must stay interactive, because screen capture needs a real desktop.
+    #
+    # The command is assembled with Chr(34) rather than escaped quotes: paths
+    # contain spaces, and nested quote-doubling across PowerShell -> VBScript is
+    # where this silently breaks.
+    $vbs = Join-Path $Root "$name.vbs"
+    $vbsLines = @(
+        'Dim q, cmd',
+        'q = Chr(34)',
+        "cmd = q & ""$ps"" & q & "" -ExecutionPolicy Bypass -NoProfile -File "" & q & ""$script"" & q & "" -OutDir "" & q & ""$outDir"" & q",
+        'CreateObject("WScript.Shell").Run cmd, 0, False'
+    )
+    Set-Content -Path $vbs -Value $vbsLines -Encoding ascii
+
+    $exe = "$env:SystemRoot\System32\wscript.exe"
+    $taskArgs = """$vbs"""
     $user = "$env:USERDOMAIN\$env:USERNAME"
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -51,7 +69,7 @@ function Register-LogonTask([string]$name, [string]$script, [string]$argLine) {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>$([System.Security.SecurityElement]::Escape($ps))</Command>
+      <Command>$([System.Security.SecurityElement]::Escape($exe))</Command>
       <Arguments>$([System.Security.SecurityElement]::Escape($taskArgs))</Arguments>
     </Exec>
   </Actions>
@@ -67,10 +85,10 @@ function Register-LogonTask([string]$name, [string]$script, [string]$argLine) {
 }
 
 if (-not $NoAudio) {
-    Register-LogonTask "dailypost-record-audio" (Join-Path $scriptDir "record_audio.ps1") "-OutDir `"$audioDir`""
+    Register-LogonTask "dailypost-record-audio" (Join-Path $scriptDir "record_audio.ps1") $audioDir
 }
 if (-not $NoActivity) {
-    Register-LogonTask "dailypost-record-activity" (Join-Path $scriptDir "record_activity.ps1") "-OutDir `"$activityDir`""
+    Register-LogonTask "dailypost-record-activity" (Join-Path $scriptDir "record_activity.ps1") $activityDir
 }
 
 # pause / resume shortcuts - the mic hears the whole room, so stopping it must be
