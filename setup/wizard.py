@@ -79,7 +79,14 @@ def yes(prompt: str, default: bool = True) -> bool:
 def load_data() -> dict:
     if CONFIG.exists():
         return yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
-    return yaml.safe_load((REPO / "config.example.yaml").read_text(encoding="utf-8")) or {}
+    # Fresh setup: the example is a documentation template, not a starting state.
+    # Its `sources` carry placeholder paths AND enabled flags — inheriting them
+    # silently enabled an unfiltered claude_projects_dir over a shared host.
+    data = yaml.safe_load((REPO / "config.example.yaml").read_text(encoding="utf-8")) or {}
+    data["sources"] = []
+    for k in ("install_root", "store_dir", "ingest_dir", "logs_dir", "run_as_user"):
+        data.pop(k, None)
+    return data
 
 
 def save_data(data: dict) -> None:
@@ -159,15 +166,28 @@ def upsert_source(data: dict, src: dict) -> None:
 
 def step_base(data: dict) -> None:
     print("\n== Base ==")
+    # Every instance needs its OWN store: a shared dailypost.db would mix two
+    # people's items and drafts together.
     suffix = f"/{INSTANCE}" if INSTANCE else ""
-    data["install_root"] = ask("install root", data.get("install_root", f"/opt/dailypost{suffix}"))
+    data["install_root"] = ask("install root", data.get("install_root") or f"/opt/dailypost{suffix}")
     root = data["install_root"]
-    data["store_dir"] = ask("store dir", data.get("store_dir", f"{root}/data"))
-    data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir", f"{root}/ingest"))
-    data["logs_dir"] = ask("logs dir", data.get("logs_dir", f"{root}/logs"))
+    if INSTANCE and not root.rstrip("/").endswith(f"/{INSTANCE}"):
+        warn(f"install root does not include the instance name — make sure it is not "
+             f"shared with another instance")
+    data["store_dir"] = ask("store dir", data.get("store_dir") or f"{root}/data")
+    data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir") or f"{root}/ingest")
+    data["logs_dir"] = ask("logs dir", data.get("logs_dir") or f"{root}/logs")
     # Never default to root: this user owns the store, the credentials and the bot
-    # process. Prefer an existing non-root default, or whoever invoked sudo.
-    default_user = data.get("run_as_user") or os.environ.get("SUDO_USER") or os.environ.get("USER", "")
+    # process. On a server that already has an instance, reuse that user — it is
+    # the one holding the Claude credentials the drafting step needs.
+    default_user = data.get("run_as_user")
+    if not default_user and (REPO / "config.yaml").exists():
+        try:
+            default_user = (yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8"))
+                            or {}).get("run_as_user")
+        except Exception:
+            default_user = None
+    default_user = default_user or os.environ.get("SUDO_USER") or os.environ.get("USER", "")
     if default_user in ("", "root"):
         default_user = "dailypost"
     data["run_as_user"] = ask("run-as user (non-root; owns the store and runs the bot)",
@@ -246,6 +266,10 @@ def step_telegram(data: dict) -> None:
     env_set("TG_API_ID", ask("TG_API_ID", env_get("TG_API_ID") or ""))
     env_set("TG_API_HASH", ask("TG_API_HASH", env_get("TG_API_HASH") or ""))
     session_file = ask("session file path", f"{data['store_dir']}/telethon.session")
+    if Path(os.path.expanduser(session_file)).exists():
+        warn(f"a Telethon session already exists at {session_file}")
+        if yes("start a FRESH login instead (recommended if this is a new person)?", True):
+            Path(os.path.expanduser(session_file)).unlink()
     upsert_source(data, {"type": "telegram", "enabled": True, "session_file": session_file,
                          "max_dialogs": 40, "max_messages_per_dialog": 300,
                          "require_my_participation": yes(
@@ -259,6 +283,13 @@ def step_telegram(data: dict) -> None:
                             system_version="read-only") as c:
             me = c.get_me()
             ok(f"logged in as {me.first_name} (id {me.id})")
+        # An existing session file authorises silently — make a wrong account loud
+        if not yes(f"is '{me.first_name}' the right account"
+                   f"{f' for {INSTANCE}' if INSTANCE else ''}?", True):
+            Path(os.path.expanduser(session_file)).unlink(missing_ok=True)
+            bad("session discarded — re-run: python -m setup.wizard "
+                f"{f'--instance {INSTANCE} ' if INSTANCE else ''}--source telegram")
+            return
         fix_owner(data, session_file)
 
 
@@ -602,6 +633,26 @@ def doctor() -> int:
     check("claude CLI", lambda: subprocess.run(
         [str(cfg.get("pipeline.claude_bin", "claude")), "--version"],
         capture_output=True, text=True, check=True).stdout.strip())
+
+    def _store_isolation():
+        """Two instances sharing a store would write into one dailypost.db and
+        mix their items, drafts and sessions together."""
+        mine = Path(os.path.expanduser(str(cfg.get("store_dir")))).resolve()
+        others = []
+        for other in [REPO / "config.yaml", *(REPO / "instances").glob("*/config.yaml")]:
+            if not other.exists() or other.resolve() == CONFIG.resolve():
+                continue
+            try:
+                d = yaml.safe_load(other.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            if d.get("store_dir") and Path(os.path.expanduser(d["store_dir"])).resolve() == mine:
+                others.append(str(other))
+        if others:
+            raise RuntimeError(f"store_dir {mine} is also used by {others} — give this "
+                               "instance its own store_dir")
+        return f"private store at {mine}"
+    check("store isolation", _store_isolation)
 
     def _overlap():
         from server.harvest import unsafe_sources
