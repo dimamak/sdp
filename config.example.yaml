@@ -115,4 +115,22 @@ laptop:
       dir: ~/Pictures/Screenshots
       include: "*.png"
 
+# Local speech-to-text for harvested audio (always-on office capture, call
+# debriefs). Runs before the digest on the nightly cron.
+transcription:
+  enabled: false
+  # ivrit.ai Hebrew fine-tune; use "large-v3-turbo" for English-first setups
+  model: ivrit-ai/whisper-large-v3-turbo-ct2
+  language: he                         # always set explicitly - the fine-tune's
+                                       # own language detection is degraded
+  device: cpu
+  compute_type: int8
+  cpu_threads: 4
+  beam_size: 1                         # 1 is much faster and fine for summarising
+  silence_threshold_db: -35            # below this counts as silence
+  min_silence_seconds: 1.5             # gaps longer than this are removed
+  min_speech_seconds: 4                # files with less speech than this are dropped
+  delete_audio_after: true             # discard raw audio once transcribed
+  max_files_per_run: 200
+
 retention_days: 30                     # prune raw files under store files/ after N days

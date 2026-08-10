@@ -31,6 +31,7 @@ KIND_BY_EXT = {
     ".opus": ("audio", "audio"),
     ".txt": ("notes", "note"),
     ".md": ("notes", "note"),
+    ".ndjson": ("activity", "activity_log"),
 }
 
 

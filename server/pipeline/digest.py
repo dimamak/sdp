@@ -18,6 +18,38 @@ from ..util import get_logger, window_start_iso
 log = get_logger("pipeline.digest")
 
 
+def _activity_timeline(path: Path, since: datetime | None, cap: int) -> str:
+    """Foreground-window log -> a compact timeline of non-coding activity.
+
+    Consecutive samples in the same app collapse into one line, so a day of work
+    reads as a handful of lines rather than hundreds of samples."""
+    if not path.exists():
+        return ""
+    rows = []
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = rec.get("ts")
+                if since and ts:
+                    try:
+                        if datetime.fromisoformat(str(ts).replace("Z", "+00:00")) < since:
+                            continue
+                    except ValueError:
+                        pass
+                rows.append((str(ts)[11:16], rec.get("app", "?"), rec.get("title", "")))
+    except OSError:
+        return ""
+    out, last_app = [], None
+    for hhmm, app, title in rows:
+        out.append(f"{hhmm} {title}" if app == last_app else f"{hhmm} [{app}] {title}")
+        last_app = app
+    return "\n".join(out)[:cap]
+
+
 def _in_window(rec: dict, since: datetime | None) -> bool:
     """A session file's mtime says when it was last touched, which can be long
     after the conversation happened (or when an unrelated tool rewrote it).
@@ -136,6 +168,18 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
             entry = f"### Coding session ({src})\n{body}"
         elif item["kind"] == "screenshot":
             entry = f"- Screenshot: {item['summary'] or Path(item['path'] or '').name}"
+        elif item["kind"] == "activity_log":
+            body = _activity_timeline(Path(item["path"] or ""), window_start, per_item_cap)
+            if not body:
+                continue
+            entry = f"### What was on screen (non-coding activity)\n{body}"
+        elif item["kind"] == "transcript":
+            if not (item["summary"] or "").strip() or item["summary"].startswith("["):
+                continue
+            meta = json.loads(item["meta_json"]) if item["meta_json"] else {}
+            when = (item["ts"] or "")[11:16]
+            entry = (f"### Spoken conversation {when} "
+                     f"({meta.get('speech_seconds', '?')}s)\n{item['summary'][:per_item_cap]}")
         else:
             body = (item["summary"] or "")[:per_item_cap]
             if not body.strip():

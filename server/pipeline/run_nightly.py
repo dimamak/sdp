@@ -15,6 +15,7 @@ from ..store import Store
 from ..util import get_logger, target_day, window_start_iso
 from .digest import build_digest
 from .draft import deliver_drafts, notify, write_drafts
+from .transcribe import transcribe_pending
 
 log = get_logger("nightly")
 
@@ -47,6 +48,13 @@ def main(argv=None) -> int:
     results = collect_all(cfg, store, since)
     for name, n in results.items():
         log.info("harvest %s: %s new items", name, n)
+
+    try:
+        n = transcribe_pending(cfg, store)
+        if n:
+            log.info("transcribed %d audio file(s)", n)
+    except Exception:
+        log.exception("transcription failed — continuing without it")
 
     digest, item_ids = build_digest(cfg, store, day)
     log.info("digest: %d chars from %d items", len(digest), len(item_ids))
