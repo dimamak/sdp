@@ -13,6 +13,7 @@ pipeline:
   window_hours: 26                    # how far back the digest looks for un-used items
   digest_max_chars: 400000            # hard cap on digest size fed to the LLM
   per_item_max_chars: 4000            # cap per harvested item in the digest
+  max_drafts: 4                       # how many stories to draft per day (one message each)
   model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
   claude_bin: claude                  # path to the claude CLI
   language_out: English               # language of the LinkedIn post

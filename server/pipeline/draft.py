@@ -41,14 +41,18 @@ Return ONLY a JSON object, no other text:
 """
 
 
-def converse(cfg, store, day: str, session_id: str, message: str) -> tuple[str, str | None]:
+def converse(cfg, store, day: str, session_id: str, message: str,
+             current_post: str | None = None) -> tuple[str, str | None]:
     """Continue the day's session with a user message.
 
     Returns (reply_to_user, new_post_text_or_None). The session carries the whole
     digest and every previous turn, so this is a real conversation, not a one-shot.
+    `current_post` names which of the day's drafts is under discussion.
     """
     files_dir = Path(store.files_dir) / day
     prompt = FOLLOW_UP_PROMPT.format(day=day, message=message, files_dir=files_dir)
+    if current_post:
+        prompt += f"\n\nThe post currently under discussion is:\n\"\"\"\n{current_post}\n\"\"\"\n"
     result = run_claude(
         cfg, prompt, session_id=session_id, resume=True, timeout=900,
         allow_read_dirs=[str(files_dir)] if files_dir.exists() else None,
@@ -62,32 +66,35 @@ def converse(cfg, store, day: str, session_id: str, message: str) -> tuple[str, 
     return (data.get("reply") or "").strip() or "(no reply)", post
 
 
-def write_draft(cfg, store, day: str, digest: str) -> int | None:
-    """Returns draft id, or None if nothing post-worthy.
+def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dict]]:
+    """Draft one post per interesting fact found in the day.
 
-    Runs inside a named session so the bot can keep talking about this day.
+    Returns (draft_ids best-first, rejected candidates). Runs inside a named
+    session so the bot can keep talking about this day afterwards.
     """
     style = _prompt_file(cfg, "style_guide", "style-guide.md").read_text(encoding="utf-8")
     task = _prompt_file(cfg, "draft_prompt", "draft-prompt.md").read_text(encoding="utf-8")
-    task = task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
+    task = (task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
+                .replace("{MAX_DRAFTS}", str(cfg.get("pipeline.max_drafts", 4))))
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
     session_id = str(uuid.uuid4())
-    result = run_claude(cfg, prompt, timeout=900, session_id=session_id)
+    result = run_claude(cfg, prompt, timeout=1800, session_id=session_id)
     store.set_day_session(day, session_id)
     data = extract_json(result)
-    post_text = (data.get("post_text") or "").strip()
-    if not post_text:
-        log.info("model found nothing post-worthy for %s", day)
-        return None
-    draft_id = store.add_draft(
-        day=day,
-        text=post_text,
-        rationale=data.get("story_rationale"),
-        alternates=data.get("alternates") or [],
-    )
-    log.info("draft %s created for %s", draft_id, day)
-    return draft_id
+
+    rejected = data.get("rejected") or []
+    ids = []
+    for cand in (data.get("candidates") or [])[:int(cfg.get("pipeline.max_drafts", 4))]:
+        text = (cand.get("post_text") or "").strip()
+        if not text:
+            continue
+        ids.append(store.add_draft(
+            day=day, text=text,
+            rationale=cand.get("why") or cand.get("fact"),
+        ))
+    log.info("%d draft(s) created for %s (%d rejected)", len(ids), day, len(rejected))
+    return ids, rejected
 
 
 # ---- Telegram delivery (plain Bot API; callbacks handled by the bot service) ----
@@ -101,7 +108,7 @@ def tg_api(cfg, method: str, **params):
     return r.json()["result"]
 
 
-def deliver_draft(cfg, store, draft_id: int) -> None:
+def deliver_draft(cfg, store, draft_id: int, label: str = "") -> None:
     draft = store.get_draft(draft_id)
     chat_id = cfg.secret("TG_ALLOWED_CHAT_ID")
     if not chat_id:
@@ -109,19 +116,30 @@ def deliver_draft(cfg, store, draft_id: int) -> None:
     keyboard = {
         "inline_keyboard": [
             [{"text": "✅ Approve & post", "callback_data": f"approve:{draft_id}"},
-             {"text": "🔁 Another story", "callback_data": f"another:{draft_id}"}],
+             {"text": "🔁 Another angle", "callback_data": f"another:{draft_id}"}],
             [{"text": "✏️ Replace text", "callback_data": f"edit:{draft_id}"},
              {"text": "⏭ Skip", "callback_data": f"skip:{draft_id}"}],
         ]
     }
-    text = f"📝 LinkedIn draft for {draft['day']}\n\n{draft['text']}"
+    head = label or f"📝 LinkedIn draft for {draft['day']}"
+    text = f"{head}\n\n{draft['text']}"
     if draft["rationale"]:
-        text += f"\n\n— story: {draft['rationale']}"
+        text += f"\n\n— why: {draft['rationale']}"
     msg = tg_api(cfg, "sendMessage", chat_id=chat_id, text=text[:4000], reply_markup=keyboard)
     store.update_draft(draft_id, tg_message_id=str(msg["message_id"]))
-    alternates = json.loads(draft["alternates_json"]) if draft["alternates_json"] else []
-    for i, alt in enumerate(alternates[:2], 1):
-        tg_api(cfg, "sendMessage", chat_id=chat_id, text=f"(alternate {i})\n\n{alt}"[:4000])
+
+
+def deliver_drafts(cfg, store, draft_ids: list[int], rejected: list[dict] | None = None) -> None:
+    """One message per draft, then a compact list of what was considered and dropped."""
+    day = store.get_draft(draft_ids[0])["day"] if draft_ids else ""
+    for i, did in enumerate(draft_ids, 1):
+        deliver_draft(cfg, store, did, label=f"📝 {i}/{len(draft_ids)} · {day}")
+    if rejected:
+        lines = [f"• {r.get('fact', '')} — {r.get('reason', '')}" for r in rejected[:12]]
+        tg_api(cfg, "sendMessage",
+               chat_id=cfg.secret("TG_ALLOWED_CHAT_ID"),
+               text=("Also considered, not drafted (reply if you want one of these):\n"
+                     + "\n".join(lines))[:4000])
 
 
 def notify(cfg, text: str) -> None:

@@ -24,11 +24,15 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
 
    A day of routine work with no surprising fact is a valid outcome — say so rather than forcing a post.
 
-3. Pick the SINGLE best fact. Privately draft 3 different hooks that each state the fact
-   a different way (the number / the wrong assumption / the stake). **No hook may contain a
-   tool name, a version, or any setup clause.** Keep the strongest, discard the rest.
+3. Write a post for EVERY candidate that passed all three gates, best first, up to
+   {MAX_DRAFTS} of them. Don't merge two facts into one post, and don't pad the list with
+   candidates that failed a gate — three strong posts beat six weak ones.
 
-4. Write the post in {LANGUAGE_OUT}, obeying every rule in the style guide:
+   For each one, privately draft 3 different hooks that each state the fact a different
+   way (the number / the wrong assumption / the stake). **No hook may contain a tool name,
+   a version, or any setup clause.** Keep the strongest, discard the rest.
+
+4. Write each post in {LANGUAGE_OUT}, obeying every rule in the style guide:
    - Lead with the hook. Then the finding, then why it matters.
    - Mechanism gets 1–2 sentences maximum, only if the fact is meaningless without it.
    - Cut the investigation narrative completely — no "I checked X, then Y".
@@ -37,14 +41,13 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
      and only when the question is real.
    - Target 600–1,200 characters.
 
-5. Self-check and fix:
+5. Self-check and fix each post:
    - Does line 1 work as the entire post if nobody clicks "see more"?
    - Could a smart non-specialist explain the point back to me after 15 seconds?
    - Did I delete every sentence that only proves work happened?
+   - Do two posts overlap? If so, cut the weaker one.
 
-6. Also produce up to 2 shorter alternates from different facts if the digest supports them.
-
-7. **FINAL PASS — do this last, on the finished post and every alternate.**
+6. **FINAL PASS — do this last, on every finished post.**
    Rewrite the text; do not merely inspect it.
 
    a. **Strip every name.** Go word by word looking for products, vendors,
@@ -72,10 +75,19 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
 Return ONLY a JSON object, no other text:
 
 {
-  "story_rationale": "the fact you picked, in one sentence, and why it passes the gates",
-  "post_text": "the full post, ready to publish",
-  "alternates": ["alternate post 1", "alternate post 2"]
+  "candidates": [
+    {
+      "fact": "the fact itself, one declarative sentence",
+      "why": "why it passes the gates — what makes it interesting to an outsider",
+      "post_text": "the full post, ready to publish"
+    }
+  ],
+  "rejected": [
+    {"fact": "one declarative sentence", "reason": "which gate it failed and why"}
+  ]
 }
 
-If no candidate passes all three gates, return:
-{"story_rationale": "nothing post-worthy", "post_text": "", "alternates": []}
+Order `candidates` best first. Include every fact you considered and discarded in
+`rejected`, one line each — the reader may disagree with your judgement and ask for one.
+
+If nothing passes all three gates, return `"candidates": []` and still fill `rejected`.

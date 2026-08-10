@@ -26,8 +26,8 @@ from .linkedin_client import LinkedInClient
 
 log = get_logger("bot")
 
-ANOTHER_STORY_MSG = ("Pick a different story from today — not the one you just used. "
-                     "Tell me briefly why this one is worth posting.")
+ANOTHER_STORY_MSG = ("Write a different angle on the post under discussion, or a post for "
+                     "another fact from today if this one is exhausted. Say briefly what changed.")
 
 
 def draft_keyboard(draft_id: int) -> InlineKeyboardMarkup:
@@ -46,6 +46,7 @@ class Bot:
         self.chat_id = int(cfg.secret("TG_ALLOWED_CHAT_ID", "0"))
         self.linkedin = LinkedInClient(cfg)
         self.busy = asyncio.Lock()
+        self.active_draft_id: int | None = None  # last draft you interacted with
 
     def allowed(self, update: Update) -> bool:
         chat = update.effective_chat
@@ -53,8 +54,28 @@ class Bot:
 
     # ---- conversation --------------------------------------------------------
 
-    async def converse_turn(self, context: ContextTypes.DEFAULT_TYPE, text: str):
-        """Send one message into the day's session and act on the answer."""
+    def target_draft(self, update: Update):
+        """Which draft is this message about? Explicit reply wins, then the last
+        one you touched, then the newest of the day."""
+        msg = update.message if update else None
+        if msg is not None and msg.reply_to_message is not None:
+            d = self.store.draft_by_tg_message(msg.reply_to_message.message_id)
+            if d is not None:
+                return d
+        if self.active_draft_id is not None:
+            d = self.store.get_draft(self.active_draft_id)
+            if d is not None:
+                return d
+        row = self.store.latest_day_session()
+        return self.store.latest_draft_for_day(row["day"]) if row else None
+
+    async def converse_turn(self, context: ContextTypes.DEFAULT_TYPE, text: str,
+                            target=None, new_draft: bool = False):
+        """Send one message into the day's session and act on the answer.
+
+        `target` is the draft under discussion; a returned post updates it unless
+        new_draft is set, in which case it becomes an additional draft.
+        """
         row = self.store.latest_day_session()
         if row is None:
             await context.bot.send_message(
@@ -67,7 +88,8 @@ class Bot:
             ack = await context.bot.send_message(self.chat_id, "🤔 thinking…")
             try:
                 reply, post = await asyncio.to_thread(
-                    converse, self.cfg, self.store, row["day"], row["session_id"], text)
+                    converse, self.cfg, self.store, row["day"], row["session_id"], text,
+                    target["text"] if target is not None else None)
             except Exception as e:
                 log.exception("converse failed")
                 await ack.edit_text(f"⚠️ {e}")
@@ -75,13 +97,15 @@ class Bot:
             if not post:
                 await ack.edit_text(reply[:4000])
                 return
-            draft = self.store.latest_draft_for_day(row["day"])
-            if draft is not None:
-                self.store.update_draft(draft["id"], text=post, status="pending")
-                draft_id = draft["id"]
+            if target is not None and not new_draft:
+                self.store.update_draft(target["id"], text=post, status="pending")
+                draft_id = target["id"]
             else:
                 draft_id = self.store.add_draft(row["day"], post)
-            await ack.edit_text(f"{reply}\n\n{post}"[:4000], reply_markup=draft_keyboard(draft_id))
+            self.active_draft_id = draft_id
+            sent = await ack.edit_text(f"{reply}\n\n{post}"[:4000],
+                                       reply_markup=draft_keyboard(draft_id))
+            self.store.update_draft(draft_id, tg_message_id=str(sent.message_id))
 
     # ---- handlers ------------------------------------------------------------
 
@@ -96,6 +120,7 @@ class Bot:
         if draft is None:
             await q.edit_message_reply_markup(None)
             return
+        self.active_draft_id = draft_id
 
         if action == "approve":
             if draft["status"] == "posted":
@@ -113,8 +138,7 @@ class Bot:
             await context.bot.send_message(self.chat_id, f"✅ Posted. {link}")
 
         elif action == "another":
-            await q.edit_message_reply_markup(None)
-            await self.converse_turn(context, ANOTHER_STORY_MSG)
+            await self.converse_turn(context, ANOTHER_STORY_MSG, target=draft, new_draft=True)
 
         elif action == "edit":
             prev = self.store.latest_editing_draft()
@@ -144,8 +168,9 @@ class Bot:
                 f"Updated draft:\n\n{text}"[:4000], reply_markup=draft_keyboard(draft["id"]))
             return
 
-        # everything else is a conversation turn in the day's session
-        await self.converse_turn(context, text)
+        # everything else is a conversation turn in the day's session, about the
+        # draft you replied to (or the last one you touched)
+        await self.converse_turn(context, text, target=self.target_draft(update))
 
     async def on_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.allowed(update):
@@ -163,14 +188,17 @@ class Bot:
         if not self.allowed(update):
             return
         await update.message.reply_text(
-            "Just talk to me — every message continues the same conversation about "
-            "today's work, with the full digest in context.\n\n"
+            "Each night you get one draft per interesting fact found in your day, "
+            "plus a list of what was considered and dropped.\n\n"
+            "Just talk to me — every message continues the same conversation, with the "
+            "full day in context. Reply to a specific draft to talk about that one; "
+            "otherwise I assume the last one you touched.\n\n"
             "Try:\n"
-            "• make it shorter, lead with the 12% number\n"
-            "• find another story, something about infrastructure\n"
+            "• make it shorter, lead with the number\n"
+            "• draft the one about the idle workloads instead\n"
             "• search today for anything about the payment bug\n"
-            "• what else happened today that's worth posting?\n\n"
-            "Buttons: Approve posts it · Another story picks a new one · "
+            "• end this one by asking how others handle it\n\n"
+            "Buttons: Approve posts it · Another angle rewrites it · "
             "Replace text takes your exact wording · Skip drops it.\n"
             "/status shows health.")
 

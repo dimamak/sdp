@@ -14,7 +14,7 @@ from ..harvest import collect_all
 from ..store import Store
 from ..util import get_logger, target_day, window_start_iso
 from .digest import build_digest
-from .draft import deliver_draft, notify, write_draft
+from .draft import deliver_drafts, notify, write_drafts
 
 log = get_logger("nightly")
 
@@ -64,7 +64,7 @@ def main(argv=None) -> int:
 
     (store.dir / f"digest-{day}.md").write_text(digest, encoding="utf-8")
     try:
-        draft_id = write_draft(cfg, store, day, digest)
+        draft_ids, rejected = write_drafts(cfg, store, day, digest)
     except Exception as e:
         log.exception("draft failed")
         notify(cfg, f"⚠️ dailypost: draft generation failed for {day}: {e}")
@@ -72,12 +72,12 @@ def main(argv=None) -> int:
 
     store.mark_used(item_ids, day)
 
-    if draft_id is None:
+    if not draft_ids:
         notify(cfg, f"🌙 dailypost: harvested {sum(v for v in results.values() if v > 0)} items for {day}, "
                     "but nothing post-worthy today.")
         return 0
 
-    deliver_draft(cfg, store, draft_id)
+    deliver_drafts(cfg, store, draft_ids, rejected)
     prune_old_files(cfg, store)
 
     # LinkedIn token expiry early warning

@@ -146,6 +146,13 @@ class Store:
             "SELECT * FROM drafts WHERE status='editing' ORDER BY id DESC LIMIT 1"
         ).fetchone()
 
+    def draft_by_tg_message(self, tg_message_id: str | int) -> sqlite3.Row | None:
+        """Resolve which draft a Telegram reply refers to."""
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE tg_message_id=? ORDER BY id DESC LIMIT 1",
+            (str(tg_message_id),),
+        ).fetchone()
+
     def latest_draft_for_day(self, day: str) -> sqlite3.Row | None:
         return self.db.execute(
             "SELECT * FROM drafts WHERE day=? ORDER BY id DESC LIMIT 1", (day,)
