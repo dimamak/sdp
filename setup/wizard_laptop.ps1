@@ -20,7 +20,18 @@ Write-Host "ssh OK" -ForegroundColor Green
 
 $remoteDir = Read-Host "remote ingest dir [default /opt/dailypost/ingest/laptop]"
 if (-not $remoteDir) { $remoteDir = "/opt/dailypost/ingest/laptop" }
-$postCmd = Read-Host "remote post-extract command (optional, e.g. chown -R appuser: $remoteDir; empty = none)"
+
+# Files arrive owned by whoever ssh connects as. If the pipeline runs as a
+# different user it won't be able to drain the spool, so hand ownership over.
+$sshUser = (ssh -o BatchMode=yes $remote "whoami").Trim()
+$runUser = Read-Host "user that runs dailypost on the server [default $sshUser]"
+if (-not $runUser) { $runUser = $sshUser }
+if ($runUser -ne $sshUser) {
+    $postCmd = "chown -R ${runUser}: '$remoteDir'"
+    Write-Host "ssh connects as '$sshUser' but the pipeline runs as '$runUser' - pushes will chown automatically."
+} else {
+    $postCmd = ""
+}
 
 $lines = @("REMOTE=$remote", "REMOTE_DIR=$remoteDir", "REMOTE_POST_CMD=$postCmd", "")
 
@@ -49,7 +60,10 @@ while ($true) {
     $lines += "PUSH_PATH=$extra"
 }
 
-Set-Content -Path $confPath -Value ($lines -join "`n") -Encoding utf8
+# UTF-8 WITHOUT BOM - PowerShell 5.1's -Encoding utf8 adds a BOM, which breaks
+# the bash parser that reads this file
+[System.IO.File]::WriteAllText($confPath, (($lines -join "`n") + "`n"),
+                               (New-Object System.Text.UTF8Encoding $false))
 Write-Host "wrote $confPath" -ForegroundColor Green
 
 $time = Read-Host "daily push time [default 23:00]"

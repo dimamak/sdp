@@ -20,7 +20,10 @@ done
 
 REMOTE="" REMOTE_DIR="" REMOTE_POST_CMD=""
 declare -a NAMES DIRS GLOBS
+first_line=1
 while IFS= read -r line; do
+  # strip a UTF-8 BOM if an editor (or PowerShell's Set-Content) added one
+  if [[ $first_line -eq 1 ]]; then line="${line#$'\xef\xbb\xbf'}"; first_line=0; fi
   line="${line%%#*}"; line="$(echo "$line" | xargs || true)"
   [[ -z "$line" ]] && continue
   case "$line" in

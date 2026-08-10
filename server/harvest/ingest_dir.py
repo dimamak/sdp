@@ -63,7 +63,12 @@ def collect(src, cfg, store, since) -> int:
         ):
             shutil.copy2(f, dest)
             count += 1
-        f.unlink()  # ingest dir is a spool: always drain
+        try:
+            f.unlink()  # ingest dir is a spool: always drain
+        except OSError as e:
+            # e.g. pushed as a different remote user, so we lack write access on
+            # the containing dir — the item is already stored, just warn
+            log.warning("%s: cannot remove %s after ingest: %s", name, f, e)
     # remove now-empty subdirectories
     for d in sorted((p for p in root.glob("**/*") if p.is_dir()), reverse=True):
         try:
