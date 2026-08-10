@@ -27,7 +27,8 @@ def _activity_timeline(path: Path, since: datetime | None, cap: int) -> str:
         return ""
     rows = []
     try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
+        # utf-8-sig tolerates a BOM from Windows-side writers
+        with path.open(encoding="utf-8-sig", errors="replace") as fh:
             for line in fh:
                 try:
                     rec = json.loads(line)

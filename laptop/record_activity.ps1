@@ -99,7 +99,10 @@ while ($true) {
             $rec = [ordered]@{ ts = $now.ToUniversalTime().ToString("o"); app = $app; title = $title }
             $line = ($rec | ConvertTo-Json -Compress)
             $logFile = Join-Path $OutDir ("activity-" + $now.ToString("yyyyMMdd") + ".ndjson")
-            Add-Content -Path $logFile -Value $line -Encoding utf8
+            # UTF-8 without BOM: Add-Content -Encoding utf8 prefixes a BOM on
+            # creation, which breaks JSON parsing of the first line server-side
+            [System.IO.File]::AppendAllText($logFile, $line + "`n",
+                                            (New-Object System.Text.UTF8Encoding $false))
             $lastTitle = $title
         }
 
