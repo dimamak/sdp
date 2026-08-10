@@ -402,8 +402,37 @@ def step_whatsapp(data: dict) -> None:
     existing = get_source(data, "whatsapp") or {}
     port = ask("webhook port (localhost)",
                str(existing.get("webhook_port") or first_free(8477)))
-    default_port = current_waha_port() or first_free(3000)
-    waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
+
+    # One WAHA container can host several named sessions (verified on the Core
+    # tier), so a second person does not need a second container — just their own
+    # session inside the existing one. Each session gets its own webhook URL, so
+    # messages still land in the right instance's store.
+    running = subprocess.run(
+        ["docker", "ps", "--filter", "name=dailypost-waha", "--format", "{{.Names}} {{.Ports}}"],
+        capture_output=True, text=True).stdout.strip().splitlines()
+    reuse = None
+    if running and INSTANCE:
+        print("  Existing WAHA container(s) on this server:")
+        for line in running:
+            print(f"    - {line}")
+        if yes("reuse an existing container with your own session (recommended)?", True):
+            reuse = running[0].split()[0] if len(running) == 1 else ask("container name")
+
+    session_name = (INSTANCE or "default").lower()
+    if reuse:
+        out = subprocess.run(["docker", "port", reuse, "3000"], capture_output=True, text=True)
+        waha_port = int(out.stdout.strip().rsplit(":", 1)[1])
+        container = reuse
+        # the shared container was started with the first instance's key
+        shared_key = ask("WAHA_API_KEY of that container (see its instance .env)", key)
+        key = shared_key
+        env_set("WAHA_API_KEY", key)
+        ok(f"reusing {container} on port {waha_port}, session '{session_name}'")
+    else:
+        container = waha_container()
+        session_name = "default" if not INSTANCE else session_name
+        default_port = current_waha_port() or first_free(3000)
+        waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
 
     # The container reaches the host on the docker bridge gateway, so the webhook
     # receiver must bind there rather than on loopback.
@@ -414,13 +443,14 @@ def step_whatsapp(data: dict) -> None:
     upsert_source(data, {"type": "whatsapp", "enabled": True,
                          "waha_url": f"http://127.0.0.1:{waha_port}",
                          "webhook_port": int(port), "webhook_host": gw,
-                         "container_name": waha_container()})
-    compose = REPO / "server" / "docker" / "waha.compose.yml"
-    env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port,
-           "WAHA_PORT": str(waha_port), "WAHA_CONTAINER": waha_container(),
-           "COMPOSE_PROJECT_NAME": waha_container()}
-    subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
-    ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable from the internet)")
+                         "container_name": container, "session": session_name})
+    if not reuse:
+        compose = REPO / "server" / "docker" / "waha.compose.yml"
+        env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port,
+               "WAHA_PORT": str(waha_port), "WAHA_CONTAINER": container,
+               "COMPOSE_PROJECT_NAME": container}
+        subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
+        ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable from the internet)")
     print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
     if yes("pair WhatsApp now (QR code shown right here in the terminal)?"):
         step_pair(data)
@@ -443,13 +473,14 @@ def step_pair(data: dict) -> None:
         bad("whatsapp source not configured — run --source whatsapp first")
         return
     base = src["waha_url"]
+    sess = src.get("session", "default")
     headers = {"X-Api-Key": env_get("WAHA_API_KEY") or ""}
 
     def session_status() -> str:
-        r = requests.get(f"{base}/api/sessions/default", headers=headers, timeout=10)
+        r = requests.get(f"{base}/api/sessions/{sess}", headers=headers, timeout=10)
         if r.status_code == 404:
             requests.post(f"{base}/api/sessions", headers=headers,
-                          json={"name": "default", "start": True}, timeout=30)
+                          json={"name": sess, "start": True}, timeout=30)
             return "STARTING"
         return r.json().get("status", "UNKNOWN")
 
@@ -459,7 +490,7 @@ def step_pair(data: dict) -> None:
         which silently leaves messages undelivered."""
         url = f"http://{src.get('webhook_host', '172.17.0.1')}:{src.get('webhook_port', 8477)}/waha"
         body = {"config": {"webhooks": [{"url": url, "events": ["message"]}]}}
-        r = requests.put(f"{base}/api/sessions/default", headers=headers, json=body, timeout=30)
+        r = requests.put(f"{base}/api/sessions/{sess}", headers=headers, json=body, timeout=30)
         if r.ok:
             ok(f"webhook registered: {url}")
         else:
@@ -471,7 +502,7 @@ def step_pair(data: dict) -> None:
         ok("already paired — session WORKING")
         return
     if st in ("STOPPED", "FAILED"):
-        requests.post(f"{base}/api/sessions/default/start", headers=headers, timeout=30)
+        requests.post(f"{base}/api/sessions/{sess}/start", headers=headers, timeout=30)
 
     print("  Open WhatsApp on your phone → Settings → Linked devices → Link a device")
     print("  Waiting for QR (it refreshes automatically; Ctrl-C to abort)...")
@@ -484,7 +515,7 @@ def step_pair(data: dict) -> None:
             ok("WhatsApp paired — session WORKING")
             return
         if st == "SCAN_QR_CODE":
-            r = requests.get(f"{base}/api/default/auth/qr?format=raw", headers=headers, timeout=10)
+            r = requests.get(f"{base}/api/{sess}/auth/qr?format=raw", headers=headers, timeout=10)
             value = r.json().get("value") if r.ok else None
             if value and value != shown:
                 shown = value
@@ -723,7 +754,7 @@ def doctor() -> int:
         elif t == "whatsapp":
             def _wa(s=src):
                 import requests
-                r = requests.get(f"{s['waha_url']}/api/sessions/default",
+                r = requests.get(f"{s['waha_url']}/api/sessions/{s.get('session', 'default')}",
                                  headers={"X-Api-Key": cfg.secret("WAHA_API_KEY") or ""}, timeout=10)
                 r.raise_for_status()
                 d = r.json()
@@ -843,7 +874,7 @@ def _done_pair(data):
         return "n/a (whatsapp disabled)"
     try:
         import requests
-        r = requests.get(f"{src['waha_url']}/api/sessions/default",
+        r = requests.get(f"{src['waha_url']}/api/sessions/{src.get('session', 'default')}",
                          headers={"X-Api-Key": env_get("WAHA_API_KEY") or ""}, timeout=5)
         if r.ok and r.json().get("status") == "WORKING":
             return "session WORKING"

@@ -18,6 +18,8 @@ log = get_logger("bot.waha")
 def build_app(cfg, store) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     expected_key = cfg.secret("WAHA_API_KEY")
+    src = cfg.source_by_type("whatsapp") or {}
+    expected_session = str(src.get("session", "default"))
 
     @app.post("/waha")
     async def waha(request: Request, x_api_key: str | None = Header(default=None)):
@@ -25,6 +27,12 @@ def build_app(cfg, store) -> FastAPI:
             raise HTTPException(403)
         data = await request.json()
         if data.get("event") != "message":
+            return {"ok": True}
+        # When one WAHA container hosts several people's sessions, a misrouted
+        # webhook would file someone else's messages into this store.
+        session = data.get("session")
+        if session and session != expected_session:
+            log.warning("ignoring event for session %r (expected %r)", session, expected_session)
             return {"ok": True}
         p = data.get("payload") or {}
         body = p.get("body") or ""
