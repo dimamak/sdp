@@ -208,15 +208,20 @@ def start_waha_webhook(cfg: Config):
     if not (src and src.get("enabled")):
         return
     port = int(src.get("webhook_port", 8477))
+    # WAHA runs in a container and reaches the host on the docker bridge gateway
+    # (host.docker.internal -> 172.17.0.1), so binding to loopback alone makes the
+    # webhook undeliverable. Bind to that gateway when configured; it's a host-local
+    # interface, not routable from outside, and the endpoint still checks the API key.
+    host = str(src.get("webhook_host", "127.0.0.1"))
 
     def run():
         import uvicorn
         from .waha_webhook import build_app
         app = build_app(cfg, Store(cfg.path_of("store_dir")))  # own Store: sqlite per-thread
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+        uvicorn.run(app, host=host, port=port, log_level="warning")
 
     threading.Thread(target=run, daemon=True, name="waha-webhook").start()
-    log.info("WAHA webhook listening on 127.0.0.1:%d", port)
+    log.info("WAHA webhook listening on %s:%d", host, port)
 
 
 def main() -> None:

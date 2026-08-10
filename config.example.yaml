@@ -71,6 +71,9 @@ sources:
     max_messages_per_dialog: 300
     require_my_participation: true     # keep a chat only if YOU wrote in it during
                                        # the window (skips lurked channels/groups)
+    exclude_chats: []                  # substrings of chat titles to never harvest —
+                                       # put your approval bot here, or its drafts
+                                       # feed back into the next day's digest
 
   # Gmail digest (sent + received, subjects + snippets). One-time OAuth via wizard.
   - type: gmail
@@ -85,7 +88,10 @@ sources:
   - type: whatsapp
     enabled: false
     waha_url: http://127.0.0.1:3000
-    webhook_port: 8477                 # localhost port the bot service listens on
+    webhook_port: 8477                 # port the bot service listens on for WAHA events
+    webhook_host: 127.0.0.1            # set to the docker bridge gateway (usually
+                                       # 172.17.0.1) so the WAHA container can reach it;
+                                       # the wizard detects this for you
 
 bot:
   # Telegram bot for draft delivery + Approve/Edit/Skip. Token + allowed chat id in .env.

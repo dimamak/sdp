@@ -35,6 +35,9 @@ def collect(src, cfg, store, since) -> int:
 
     max_dialogs = int(src.get("max_dialogs", 40))
     max_msgs = int(src.get("max_messages_per_dialog", 300))
+    # never harvest our own approval bot's chat: its drafts would flow back into
+    # tomorrow's digest and the model would start writing about its own output
+    exclude = [str(x).lower() for x in (src.get("exclude_chats") or [])]
     # only keep a chat's messages if I wrote something there within the window —
     # skips lurked channels/groups where I never participate
     require_participation = bool(src.get("require_my_participation", True))
@@ -51,6 +54,9 @@ def collect(src, cfg, store, since) -> int:
             if dialog.date and dialog.date < floor:
                 continue
             title = dialog.name or str(dialog.id)
+            if any(x in title.lower() for x in exclude):
+                log.debug("skip excluded chat %s", title)
+                continue
             batch = []
             i_participated = False
             for msg in client.iter_messages(dialog.entity, limit=max_msgs):

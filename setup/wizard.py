@@ -290,8 +290,16 @@ def step_whatsapp(data: dict) -> None:
 
     default_port = current_waha_port() or first_free(3000)
     waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
+
+    # The container reaches the host on the docker bridge gateway, so the webhook
+    # receiver must bind there rather than on loopback.
+    gw = subprocess.run(
+        "ip -4 addr show docker0 | grep -oP 'inet \\K[\\d.]+'",
+        shell=True, capture_output=True, text=True).stdout.strip() or "172.17.0.1"
+
     upsert_source(data, {"type": "whatsapp", "enabled": True,
-                         "waha_url": f"http://127.0.0.1:{waha_port}", "webhook_port": int(port)})
+                         "waha_url": f"http://127.0.0.1:{waha_port}",
+                         "webhook_port": int(port), "webhook_host": gw})
     compose = REPO / "server" / "docker" / "waha.compose.yml"
     env = {**os.environ, "WAHA_API_KEY": key, "WAHA_WEBHOOK_PORT": port, "WAHA_PORT": str(waha_port)}
     subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
@@ -328,8 +336,21 @@ def step_pair(data: dict) -> None:
             return "STARTING"
         return r.json().get("status", "UNKNOWN")
 
+    def ensure_webhook():
+        """Register our receiver on the session itself. The container-level default
+        (WHATSAPP_HOOK_URL) does not apply to sessions created via the dashboard,
+        which silently leaves messages undelivered."""
+        url = f"http://{src.get('webhook_host', '172.17.0.1')}:{src.get('webhook_port', 8477)}/waha"
+        body = {"config": {"webhooks": [{"url": url, "events": ["message"]}]}}
+        r = requests.put(f"{base}/api/sessions/default", headers=headers, json=body, timeout=30)
+        if r.ok:
+            ok(f"webhook registered: {url}")
+        else:
+            bad(f"could not register webhook ({r.status_code}): {r.text[:200]}")
+
     st = session_status()
     if st == "WORKING":
+        ensure_webhook()
         ok("already paired — session WORKING")
         return
     if st in ("STOPPED", "FAILED"):
@@ -342,6 +363,7 @@ def step_pair(data: dict) -> None:
     for _ in range(120):  # ~4 minutes
         st = session_status()
         if st == "WORKING":
+            ensure_webhook()
             ok("WhatsApp paired — session WORKING")
             return
         if st == "SCAN_QR_CODE":
