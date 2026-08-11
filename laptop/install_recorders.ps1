@@ -226,7 +226,10 @@ if (Test-Path $conf) {
     # silently appended a duplicate PUSH_PATH on every run.
     $hasAudio = @($lines | Where-Object { $_ -like "PUSH_PATH=audio|*" }).Count -gt 0
     $hasAct = @($lines | Where-Object { $_ -like "PUSH_PATH=activity|*" }).Count -gt 0
-    if (-not $NoAudio -and -not $hasAudio) { $add += "PUSH_PATH=audio|$(ConvertTo-BashPath $audioDir)|*.opus" }
+    # only *.speech.opus: those are segments the local sweep has closed AND found
+    # speech in. A bare *.opus also matches the segment ffmpeg is still writing,
+    # which arrives truncated and fails to decode on the server.
+    if (-not $NoAudio -and -not $hasAudio) { $add += "PUSH_PATH=audio|$(ConvertTo-BashPath $audioDir)|*.speech.opus" }
     if (-not $NoActivity -and -not $hasAct) { $add += "PUSH_PATH=activity|$(ConvertTo-BashPath $activityDir)|*" }
     if ($add) {
         [System.IO.File]::WriteAllText($conf, (($lines + $add) -join "`n") + "`n",
