@@ -85,10 +85,13 @@ function Get-SpeechSeconds([string]$file) {
     # One decode pass with silencedetect: total duration minus detected silence.
     # Cheaper than re-encoding, and it runs once per finished segment.
     $tmp = Join-Path $env:TEMP ("dp-sd-" + [System.IO.Path]::GetFileNameWithoutExtension($file) + ".txt")
-    $a = '-hide_banner -nostdin -i "' + $file + '" -af silencedetect=noise=' +
-         $SilenceThresholdDb + 'dB:d=1.5 -f null -'
-    $p = Start-Process -FilePath "ffmpeg" -ArgumentList $a -WindowStyle Hidden `
-        -PassThru -Wait -RedirectStandardError $tmp
+    # Run through cmd rather than Start-Process -Wait: inside the hidden host that
+    # call can block forever, which stalls the whole sweep loop. cmd also does the
+    # stderr redirect natively, avoiding PowerShell 5.1 turning ffmpeg's stderr
+    # into terminating NativeCommandErrors.
+    $cmdLine = 'ffmpeg -hide_banner -nostdin -i "' + $file + '" -af silencedetect=noise=' +
+               $SilenceThresholdDb + 'dB:d=1.5 -f null - 2> "' + $tmp + '"'
+    & cmd.exe /c $cmdLine 2>&1 | Out-Null
     $out = Get-Content $tmp -Raw -ErrorAction SilentlyContinue
     Remove-Item $tmp -ErrorAction SilentlyContinue
     if (-not $out) { return -1 }
@@ -131,9 +134,11 @@ This file is removed automatically once speech is detected again.
 function Remove-SilentSegments {
     # Only look at finished files: the segment muxer is still writing the newest one.
     $cutoff = (Get-Date).AddSeconds(-60)
-    Get-ChildItem (Join-Path $OutDir "*.opus") -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -lt $cutoff -and $_.Name -notlike "*.speech.opus" } |
-        ForEach-Object {
+    $todo = @(Get-ChildItem (Join-Path $OutDir "*.opus") -ErrorAction SilentlyContinue |
+              Where-Object { $_.LastWriteTime -lt $cutoff -and $_.Name -notlike "*.speech.opus" })
+    if ($todo.Count -eq 0) { return }
+    Log "sweep: checking $($todo.Count) finished segment(s)"
+    $todo | ForEach-Object {
             if ($_.Length -eq 0) { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue; return }
             $speech = Get-SpeechSeconds $_.FullName
             if ($speech -ge 0 -and $speech -lt $MinSpeechSeconds) {
