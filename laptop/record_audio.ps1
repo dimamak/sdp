@@ -56,6 +56,31 @@ Write-Host "pause:            create $OutDir\PAUSED"
 
 $pauseFile = Join-Path $OutDir "PAUSED"
 
+# The recorder runs hidden, so console output goes nowhere. Keep a small log:
+# without it, a failing silence sweep is invisible and silence piles up.
+$logFile = Join-Path $OutDir "recorder.log"
+function Log([string]$m) {
+    $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $m
+    try { [System.IO.File]::AppendAllText($logFile, $line + "`r`n") } catch {}
+    Write-Host $line
+}
+
+function Stop-OrphanedCapture {
+    # ffmpeg is started detached, so killing this script (or re-registering the
+    # scheduled task) leaves it recording with nobody to sweep silence or honour
+    # the pause flag - and it holds the microphone, so a fresh recorder cannot
+    # open the device. Clear ours out before starting.
+    $mine = @(Get-CimInstance Win32_Process -Filter "Name='ffmpeg.exe'" -ErrorAction SilentlyContinue |
+              Where-Object { $_.CommandLine -and $_.CommandLine -like "*$OutDir*" })
+    foreach ($p in $mine) {
+        try {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+            Log "killed orphaned ffmpeg pid $($p.ProcessId)"
+        } catch {}
+    }
+    if ($mine.Count) { Start-Sleep -Seconds 2 }
+}
+
 function Get-SpeechSeconds([string]$file) {
     # One decode pass with silencedetect: total duration minus detected silence.
     # Cheaper than re-encoding, and it runs once per finished segment.
@@ -113,9 +138,10 @@ function Remove-SilentSegments {
             $speech = Get-SpeechSeconds $_.FullName
             if ($speech -ge 0 -and $speech -lt $MinSpeechSeconds) {
                 Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
-                Write-Host ("dropped {0} ({1:N1}s speech)" -f $_.Name, $speech)
+                Log ("dropped {0} ({1:N1}s speech)" -f $_.Name, $speech)
                 Update-MicWarning $true
             } else {
+                Log ("kept {0} ({1:N1}s speech)" -f $_.Name, $speech)
                 Update-MicWarning $false
                 # mark as checked so it is not re-analysed every loop
                 Rename-Item $_.FullName ($_.BaseName + ".speech.opus") -ErrorAction SilentlyContinue
@@ -123,8 +149,12 @@ function Remove-SilentSegments {
         }
 }
 
+Stop-OrphanedCapture
+Log "recorder started (device: $Device, segments ${SegmentSeconds}s)"
+
 while ($true) {
     if (Test-Path $pauseFile) {
+        Stop-OrphanedCapture     # pause must also stop an orphan from a crash
         Start-Sleep -Seconds 20
         continue
     }
@@ -157,7 +187,7 @@ while ($true) {
         # discard silent segments locally, so a quiet day never reaches the
         # network or the server at all
         if (-not $KeepSilent -and ((Get-Date) - $lastSweep).TotalSeconds -ge 60) {
-            try { Remove-SilentSegments } catch { Write-Host "sweep failed: $($_.Exception.Message)" }
+            try { Remove-SilentSegments } catch { Log "sweep failed: $($_.Exception.Message)" }
             $lastSweep = Get-Date
         }
         Start-Sleep -Seconds 3
