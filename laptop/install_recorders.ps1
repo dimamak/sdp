@@ -45,9 +45,11 @@ function Initialize-MicInterop {
     Add-Type -TypeDefinition @"
 using System;using System.Runtime.InteropServices;
 [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator{int EnumAudioEndpoints(int d,int m,out IntPtr c);int GetDefaultAudioEndpoint(int d,int r,out IMMDevice e);}
+interface IMMDeviceEnumerator{int EnumAudioEndpoints(int d,int m,out IMMDeviceCollection c);int GetDefaultAudioEndpoint(int d,int r,out IMMDevice e);}
 [Guid("D666063F-1587-4E43-81F1-B948E807363F"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice{int Activate(ref Guid id,int ctx,IntPtr p,[MarshalAs(UnmanagedType.IUnknown)]out object o);}
+// method order must match the COM vtable exactly
+interface IMMDevice{int Activate(ref Guid id,int ctx,IntPtr p,[MarshalAs(UnmanagedType.IUnknown)]out object o);
+ int OpenPropertyStore(int a,out IPropertyStore s);int GetId([MarshalAs(UnmanagedType.LPWStr)]out string id);int GetState(out int st);}
 [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioEndpointVolume{
  int RegisterControlChangeNotify(IntPtr n);int UnregisterControlChangeNotify(IntPtr n);
@@ -57,17 +59,39 @@ interface IAudioEndpointVolume{
  int SetChannelVolumeLevelScalar(uint i,float l,ref Guid g);int GetChannelVolumeLevel(uint i,out float l);
  int GetChannelVolumeLevelScalar(uint i,out float l);int SetMute([MarshalAs(UnmanagedType.Bool)]bool m,ref Guid g);
  int GetMute([MarshalAs(UnmanagedType.Bool)]out bool m);}
+[Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceCollection{int GetCount(out uint c);int Item(uint i,out IMMDevice d);}
+[Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPropertyStore{int GetCount(out int c);int GetAt(int i,out PROPERTYKEY k);int GetValue(ref PROPERTYKEY k,out PROPVARIANT v);}
+[StructLayout(LayoutKind.Sequential)] public struct PROPERTYKEY{public Guid fmtid;public int pid;}
+[StructLayout(LayoutKind.Explicit)] public struct PROPVARIANT{[FieldOffset(0)]public short vt;[FieldOffset(8)]public IntPtr p;}
 [ComImport,Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject{}
 public class DailypostMic{
- static IAudioEndpointVolume Vol(){
+ // Target the device the RECORDER will use, not the system default: the default
+ // capture endpoint is often a webcam or headset, so checking it reports a
+ // healthy mic while the one being recorded from stays muted.
+ static PROPERTYKEY NameKey(){var k=new PROPERTYKEY();
+  k.fmtid=new Guid("a45c254e-df1c-4efd-8020-67d146a850e0");k.pid=14;return k;}
+ static IAudioEndpointVolume Vol(string match,out string found){
   var e=(IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
-  IMMDevice dev; e.GetDefaultAudioEndpoint(1,1,out dev);   // eCapture, eMultimedia
-  Guid iid=typeof(IAudioEndpointVolume).GUID; object o;
-  dev.Activate(ref iid,1,IntPtr.Zero,out o); return (IAudioEndpointVolume)o;}
- public static bool IsMuted(){bool m; Vol().GetMute(out m); return m;}
- public static int Volume(){float l; Vol().GetMasterVolumeLevelScalar(out l); return (int)(l*100);}
- public static void Unmute(){Guid g=Guid.Empty; var v=Vol(); v.SetMute(false,ref g);
-  float l; v.GetMasterVolumeLevelScalar(out l); if(l<0.5f) v.SetMasterVolumeLevelScalar(0.8f,ref g);}}
+  IMMDeviceCollection col; e.EnumAudioEndpoints(1,1,out col); uint n; col.GetCount(out n);
+  var K=NameKey(); IAudioEndpointVolume first=null; string firstName=null; found=null;
+  for(uint i=0;i<n;i++){IMMDevice d; col.Item(i,out d);
+   IPropertyStore ps; d.OpenPropertyStore(0,out ps); PROPVARIANT pv; ps.GetValue(ref K,out pv);
+   string name=Marshal.PtrToStringUni(pv.p); if(name==null) continue;
+   Guid iid=typeof(IAudioEndpointVolume).GUID; object o; d.Activate(ref iid,1,IntPtr.Zero,out o);
+   var v=(IAudioEndpointVolume)o;
+   if(first==null && name.IndexOf("NVIDIA",StringComparison.OrdinalIgnoreCase)<0){first=v;firstName=name;}
+   if(name.IndexOf(match,StringComparison.OrdinalIgnoreCase)>=0){found=name;return v;}}
+  found=firstName; return first;}
+ public static string Device(){string n; Vol("Microphone Array",out n); return n??"(none)";}
+ public static bool IsMuted(){string n; var v=Vol("Microphone Array",out n);
+  if(v==null) return false; bool m; v.GetMute(out m); return m;}
+ public static int Volume(){string n; var v=Vol("Microphone Array",out n);
+  if(v==null) return 0; float l; v.GetMasterVolumeLevelScalar(out l); return (int)(l*100);}
+ public static void Unmute(){string n; var v=Vol("Microphone Array",out n); if(v==null) return;
+  Guid g=Guid.Empty; v.SetMute(false,ref g);
+  float l; v.GetMasterVolumeLevelScalar(out l); if(l<0.6f) v.SetMasterVolumeLevelScalar(0.85f,ref g);}}
 "@
 }
 
@@ -78,7 +102,7 @@ if (-not $NoAudio) {
         Initialize-MicInterop
         if ([DailypostMic]::IsMuted()) {
             Write-Host ""
-            Write-Host "Your default microphone is currently MUTED (volume $([DailypostMic]::Volume())%)." -ForegroundColor Yellow
+            Write-Host "The recording microphone '$([DailypostMic]::Device())' is MUTED (volume $([DailypostMic]::Volume())%)." -ForegroundColor Yellow
             Write-Host "The recorder would capture silence and delete every segment."
             $unmute = Read-Host "unmute the microphone now? [y/N]"
             if ($unmute -eq "y") {
@@ -92,7 +116,7 @@ if (-not $NoAudio) {
                 Write-Host "left muted - unmute later with the mic key or Sound settings."
             }
         } else {
-            Write-Host "microphone is live (volume $([DailypostMic]::Volume())%)" -ForegroundColor Green
+            Write-Host "microphone '$([DailypostMic]::Device())' is live (volume $([DailypostMic]::Volume())%)" -ForegroundColor Green
         }
     } catch {
         Write-Host "could not read microphone state: $($_.Exception.Message)" -ForegroundColor Yellow
