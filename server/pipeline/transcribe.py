@@ -82,7 +82,11 @@ def transcribe_pending(cfg, store) -> int:
     threshold = int(cfg.get("transcription.silence_threshold_db", -35))
     min_silence = float(cfg.get("transcription.min_silence_seconds", 1.5))
     min_speech = float(cfg.get("transcription.min_speech_seconds", 4))
-    language = str(cfg.get("transcription.language", "he"))
+    # `language: auto` (or null) lets Whisper detect per file. Forcing a single
+    # language mis-renders every other one: Russian speech forced to Hebrew comes
+    # back as confident Hebrew-script gibberish, not as an obvious failure.
+    language = cfg.get("transcription.language", "he")
+    language = None if language in (None, "", "auto") else str(language)
     delete_after = bool(cfg.get("transcription.delete_audio_after", True))
     max_files = int(cfg.get("transcription.max_files_per_run", 200))
 
@@ -115,20 +119,25 @@ def transcribe_pending(cfg, store) -> int:
                 vad_filter=True, beam_size=int(cfg.get("transcription.beam_size", 1)),
             )
             text = " ".join(s.text.strip() for s in segments).strip()
+            detected = getattr(info, "language", None) or language
+            lang_prob = getattr(info, "language_probability", None)
 
         if not text:
             store.set_item_summary(row["id"], "[no speech]")
             dropped += 1
         else:
             meta = json.loads(row["meta_json"] or "{}")
-            meta.update({"speech_seconds": round(speech, 1), "language": language,
+            meta.update({"speech_seconds": round(speech, 1), "language": detected,
+                         "language_probability": round(lang_prob, 2) if lang_prob else None,
                          "transcribed": True})
             store.db.execute(
                 "UPDATE items SET summary=?, kind='transcript', meta_json=? WHERE id=?",
                 (text, json.dumps(meta, ensure_ascii=False), row["id"]))
             store.db.commit()
             done += 1
-            log.info("transcribed %s (%.0fs speech, %d chars)", src.name, speech, len(text))
+            log.info("transcribed %s (%.0fs speech, %d chars, lang=%s %s)",
+                     src.name, speech, len(text), detected,
+                     f"p={lang_prob:.2f}" if lang_prob else "")
 
         if delete_after:
             src.unlink(missing_ok=True)

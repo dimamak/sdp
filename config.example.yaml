@@ -119,10 +119,15 @@ laptop:
 # debriefs). Runs before the digest on the nightly cron.
 transcription:
   enabled: false
-  # ivrit.ai Hebrew fine-tune; use "large-v3-turbo" for English-first setups
-  model: ivrit-ai/whisper-large-v3-turbo-ct2
-  language: he                         # always set explicitly - the fine-tune's
-                                       # own language detection is degraded
+  # Pick the model to match how people actually speak in the room:
+  #   large-v3-turbo               multilingual, use with language: auto
+  #   ivrit-ai/whisper-large-v3-turbo-ct2   better Hebrew, but Hebrew ONLY - it
+  #     renders any other language as confident same-script gibberish, so only
+  #     use it with language: he when the room is reliably monolingual
+  model: large-v3-turbo
+  language: auto                       # auto | he | ru | en ...
+                                       # `auto` detects per file and records the
+                                       # result (and its confidence) on the item
   device: cpu
   compute_type: int8
   cpu_threads: 4
@@ -131,6 +136,8 @@ transcription:
   min_silence_seconds: 1.5             # gaps longer than this are removed
   min_speech_seconds: 4                # files with less speech than this are dropped
   delete_audio_after: true             # discard raw audio once transcribed
+                                       # (set false temporarily to A/B model or
+                                       # language settings on real recordings)
   max_files_per_run: 200
 
 retention_days: 30                     # prune raw files under store files/ after N days
