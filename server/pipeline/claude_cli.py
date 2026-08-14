@@ -47,7 +47,11 @@ def run_claude(cfg, prompt: str, *, allow_read_dirs: list[str] | None = None,
         env={**os.environ, **env_extra},
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"claude -p failed (rc={proc.returncode}): {proc.stderr[:1000]}")
+        # the CLI reports some failures on stdout with an empty stderr, so an
+        # error built from stderr alone reads as a blank mystery
+        raise RuntimeError(
+            f"claude -p failed (rc={proc.returncode}) "
+            f"stderr={proc.stderr[:600]!r} stdout={proc.stdout[:600]!r}")
     data = json.loads(proc.stdout)
     if data.get("is_error"):
         raise RuntimeError(f"claude -p returned error: {str(data.get('result'))[:1000]}")
