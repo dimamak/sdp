@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ..config import Config
 from ..harvest import collect_all
@@ -30,6 +31,30 @@ def prune_old_files(cfg, store) -> None:
         if d.is_dir() and d.name < cutoff:
             shutil.rmtree(d, ignore_errors=True)
             log.info("pruned %s", d)
+
+
+def prune_old_images(cfg, store) -> None:
+    """Delete the bytes of old takes that were never published.
+
+    Images attached to a posted draft are kept forever — they are the only local
+    copy of published creative. The DB rows survive either way: the prompt history
+    is what you want when the images start looking samey.
+    """
+    days = int(cfg.get("image.retention_days", cfg.get("retention_days", 30)) or 0)
+    if days <= 0:
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    n = 0
+    for row in store.stale_unposted_images(cutoff):
+        try:
+            Path(row["path"]).unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("could not remove %s: %s", row["path"], e)
+            continue
+        store.update_image(row["id"], path=None, status="pruned")
+        n += 1
+    if n:
+        log.info("pruned %d unposted image(s)", n)
 
 
 def main(argv=None) -> int:
@@ -87,6 +112,7 @@ def main(argv=None) -> int:
 
     deliver_drafts(cfg, store, draft_ids, rejected)
     prune_old_files(cfg, store)
+    prune_old_images(cfg, store)
 
     # LinkedIn token expiry early warning
     try:

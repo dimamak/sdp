@@ -24,7 +24,19 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   optional Groq API fallback for English/overflow
 - `transcribe.py` drains the audio queue before the digest step
 
-## Phase 3 — polish  ▢ ideas
+## Phase 3 — Images  ✅ implemented
+- Approve is now two-stage: it draws an illustration for the post (Gemini API,
+  `gemini-3-pro-image`) and sends it back for confirmation — nothing reaches
+  LinkedIn until "Post with image" or "Post text-only"
+- The image prompt and alt text are written by the SAME Claude session that wrote
+  the post, so the brief comes from the day's story, not from the post's wording
+- Steer by replying to the image ("more abstract, no people"); each reply is a new
+  take, and regenerating costs no LinkedIn API calls
+- Publishing migrated from `/v2/ugcPosts` to the versioned `/rest/posts` +
+  `/rest/images` API — one code path for text-only and image posts
+
+## Phase 4 — polish  ▢ ideas
 - Weekly "best of the week" mode when daily posting is too much
 - Edit-in-web-UI link instead of Telegram inline edit
-- Image attachment support (screenshots as post media) via LinkedIn assets API
+- Harvested screenshots as post media (the original Phase 3 idea) — now a small
+  addition on top of the image pipeline rather than a new integration

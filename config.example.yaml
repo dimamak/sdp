@@ -99,7 +99,45 @@ bot:
 
 linkedin:
   token_file: /opt/dailypost/data/linkedin-token.json
-  api_version: "202506"                # LinkedIn Rest version header (rest/posts)
+  api_version: "202607"                # LinkedIn-Version header on /rest/* calls.
+                                       # Versions are sunset after about a year and a
+                                       # dead one fails every call with 426 "not active"
+                                       # — check with: python -m server.bot.linkedin_client --check
+  escape_commentary: true              # /rest/posts commentary is 'little text': the
+                                       # characters \|{}@[]()<>#*_~ must be escaped or
+                                       # the post 422s. Hashtags are converted to real
+                                       # hashtags rather than escaped. Leave this on.
+  rest_fallback_v2: true               # if /rest/posts 403s because the app was never
+                                       # granted versioned-API access, retry TEXT-ONLY
+                                       # posts on the legacy /v2/ugcPosts path instead
+                                       # of going silent. Drop once /rest/ has worked.
+  # dry_run: true                      # log the request body, publish nothing
+
+# ---------------------------------------------------------------------------
+# Post illustrations (Gemini API — an API key, no GCP project needed).
+# Approve becomes two steps: it draws an image for the post and sends it back for
+# confirmation; nothing reaches LinkedIn until you tap Post with image (or Post
+# text-only). Replying to the image with plain language re-renders it.
+# API key goes in .env as GEMINI_API_KEY (aistudio.google.com/apikey — image
+# models need billing enabled on the key's project; the free tier returns 429).
+# ---------------------------------------------------------------------------
+image:
+  enabled: true                        # false = Approve publishes immediately, as before
+  provider: gemini
+  model: gemini-3-pro-image            # "nano banana pro". gemini-3.1-flash-image is
+                                       # ~3x cheaper and weaker at text inside the image
+  aspect_ratio: "1:1"                  # 1:1 2:3 3:2 3:4 4:3 4:5 5:4 9:16 16:9 21:9
+  image_size: "2K"                     # 1K | 2K | 4K  (2K ≈ 2 MB JPEG)
+  timeout: 180                         # seconds for one render, retries included
+  max_regenerations: 6                 # takes per draft; each one costs a render
+  pending_hours: 12                    # after this, plain messages stop being read as
+                                       # image feedback (bot restarts, forgotten drafts)
+  retention_days: 30                   # prune UNPOSTED takes; images actually published
+                                       # are kept forever (the only local copy)
+  # Appended to every prompt — your house look. Keep it short and visual.
+  style_suffix: >
+    Editorial illustration, restrained palette, generous negative space,
+    no text, no logos, no recognisable real people.
 
 # Laptop side (read by wizard_laptop.ps1 to generate laptop/push.conf; the bash
 # push script itself reads push.conf, not this file)

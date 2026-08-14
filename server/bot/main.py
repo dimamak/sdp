@@ -2,24 +2,32 @@
 
 Runs as a systemd service. Handles:
   - Approve / Another story / Replace text / Skip buttons on nightly drafts
+  - The image step: Approve renders an illustration and shows it for a second
+    confirmation, so nothing reaches LinkedIn on a single tap
   - Free-text conversation about the day: every message continues the SAME
     Claude session the draft was written in, so the model still has the whole
     digest (and can Read/Grep the raw day files when you ask it to dig)
   - WhatsApp messages arriving via WAHA webhook (localhost FastAPI, own thread)
 
 Hard-locked to TG_ALLOWED_CHAT_ID; everything else is ignored.
+
+Threading rule: Store owns one thread-bound sqlite connection, so everything
+handed to asyncio.to_thread takes and returns plain values, and every DB call
+stays on the event-loop thread.
 """
 from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
 from ..config import Config
-from ..pipeline.draft import converse
+from ..pipeline.draft import converse, image_brief
+from ..pipeline.image_gen import ImageGenError, generate_image
 from ..store import Store
 from ..util import get_logger
 from .linkedin_client import LinkedInClient
@@ -36,6 +44,24 @@ def draft_keyboard(draft_id: int) -> InlineKeyboardMarkup:
          InlineKeyboardButton("🔁 Another story", callback_data=f"another:{draft_id}")],
         [InlineKeyboardButton("✏️ Replace text", callback_data=f"edit:{draft_id}"),
          InlineKeyboardButton("⏭ Skip", callback_data=f"skip:{draft_id}")],
+    ])
+
+
+def image_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Post with image", callback_data=f"postimg:{draft_id}"),
+         InlineKeyboardButton("🔄 Regenerate", callback_data=f"regen:{draft_id}")],
+        [InlineKeyboardButton("📄 Post text-only", callback_data=f"posttxt:{draft_id}"),
+         InlineKeyboardButton("⏭ Cancel", callback_data=f"cancelimg:{draft_id}")],
+    ])
+
+
+def image_failed_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    """After a failed render — you are never stuck with an approved, unpostable draft."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Retry image", callback_data=f"regen:{draft_id}"),
+         InlineKeyboardButton("📄 Post text-only", callback_data=f"posttxt:{draft_id}")],
+        [InlineKeyboardButton("⏭ Cancel", callback_data=f"cancelimg:{draft_id}")],
     ])
 
 
@@ -107,6 +133,120 @@ class Bot:
                                        reply_markup=draft_keyboard(draft_id))
             self.store.update_draft(draft_id, tg_message_id=str(sent.message_id))
 
+    # ---- images --------------------------------------------------------------
+
+    async def start_image(self, context: ContextTypes.DEFAULT_TYPE, draft,
+                          feedback: str | None = None) -> None:
+        """Stage one of approval: brief → render → show it for confirmation.
+
+        Acquires self.busy exactly once and never calls converse_turn (the lock is
+        not reentrant). Regenerate re-enters here from a handler, after release.
+        """
+        draft_id = draft["id"]
+        prev = self.store.latest_image(draft_id)
+        n = (prev["n"] + 1) if prev else 1
+        cap = int(self.cfg.get("image.max_regenerations", 6))
+        if n > cap:
+            await context.bot.send_message(
+                self.chat_id,
+                f"{cap} takes on this one already — post it, or Cancel and change the text.")
+            return
+        if self.busy.locked():
+            await context.bot.send_message(self.chat_id, "Still working on the previous message…")
+            return
+
+        # resolve everything the workers need while still on the event-loop thread
+        session_id = self.store.session_for_day(draft["day"])
+        prev_prompt = prev["prompt"] if prev else None
+        out_path = self.store.image_path_for(draft["day"], draft_id, n)
+        post_text = draft["text"]
+
+        async with self.busy:
+            status = await context.bot.send_message(self.chat_id, "🎨 writing the image brief…")
+            try:
+                prompt, alt = await asyncio.to_thread(
+                    image_brief, self.cfg, draft["day"], session_id, post_text,
+                    feedback, prev_prompt)
+            except Exception as e:
+                log.exception("image brief failed")
+                self.store.update_draft(draft_id, status="imaging")
+                await status.edit_text(f"⚠️ image brief failed: {e}"[:4000],
+                                       reply_markup=image_failed_keyboard(draft_id))
+                return
+
+            await status.edit_text(f"🎨 rendering take {n}…")
+            try:
+                img = await asyncio.to_thread(generate_image, self.cfg, prompt, out_path=out_path)
+            except ImageGenError as e:
+                log.warning("render failed (%s): %s", e.reason, e)
+                self.store.add_image(draft_id, n, prompt=prompt, alt_text=alt,
+                                     feedback=feedback, status="failed", error=str(e))
+                self.store.update_draft(draft_id, status="imaging")
+                detail = f"\n\n{e.detail}" if e.detail else ""
+                await status.edit_text(
+                    f"⚠️ image generation failed ({e.reason}): {e}{detail}"[:4000],
+                    reply_markup=image_failed_keyboard(draft_id))
+                return
+
+            img_id = self.store.add_image(draft_id, n, prompt=prompt, alt_text=alt,
+                                          feedback=feedback, path=str(img.path),
+                                          mime=img.mime, model=img.model, status="ready")
+            self.store.update_draft(draft_id, status="imaging")
+            self.active_draft_id = draft_id
+
+            # only the newest take keeps live buttons
+            if prev is not None:
+                self.store.update_image(prev["id"], status="discarded")
+                if prev["tg_message_id"]:
+                    try:
+                        await context.bot.edit_message_reply_markup(
+                            self.chat_id, int(prev["tg_message_id"]), reply_markup=None)
+                    except Exception:
+                        pass
+
+            await status.delete()
+            # photo carries the alt text (short, and worth reviewing); the post text
+            # goes in its own message because it routinely exceeds the 1024 caption cap
+            with open(img.path, "rb") as fh:
+                photo = await context.bot.send_photo(self.chat_id, photo=fh,
+                                                     caption=(alt or "")[:1024])
+            sent = await context.bot.send_message(
+                self.chat_id,
+                (f"{post_text}\n\n— take {n}. Reply to steer the image "
+                 f"(\"more abstract, no people\"). /talk to discuss the text instead.")[:4000],
+                reply_to_message_id=photo.message_id,
+                reply_markup=image_keyboard(draft_id))
+            self.store.update_image(img_id, status="pending_review",
+                                    tg_message_id=str(sent.message_id),
+                                    tg_photo_message_id=str(photo.message_id))
+
+    async def publish(self, context: ContextTypes.DEFAULT_TYPE, draft, img=None) -> None:
+        """Stage two: actually send it to LinkedIn. The only place that publishes."""
+        draft_id = draft["id"]
+        if self.busy.locked():
+            await context.bot.send_message(self.chat_id, "Still working on the previous message…")
+            return
+        async with self.busy:
+            note = await context.bot.send_message(
+                self.chat_id, "📤 posting to LinkedIn…" if img is None
+                else "📤 uploading the image and posting…")
+            try:
+                urn, image_urn = await asyncio.to_thread(
+                    self.linkedin.post, draft["text"],
+                    Path(img["path"]) if img else None,
+                    img["alt_text"] if img else None)
+            except Exception as e:
+                log.exception("post failed")
+                await note.edit_text(
+                    f"⚠️ LinkedIn post failed: {e}"[:4000],
+                    reply_markup=image_keyboard(draft_id) if img else draft_keyboard(draft_id))
+                return
+            self.store.update_draft(draft_id, status="posted", posted_urn=urn)
+            if img is not None:
+                self.store.update_image(img["id"], status="attached", li_image_urn=image_urn)
+            link = f"https://www.linkedin.com/feed/update/{urn}/" if urn.startswith("urn:") else ""
+            await note.edit_text(f"✅ Posted{' with image' if img else ''}. {link}")
+
     # ---- handlers ------------------------------------------------------------
 
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,16 +266,47 @@ class Bot:
             if draft["status"] == "posted":
                 await q.edit_message_reply_markup(None)
                 return
-            try:
-                urn = self.linkedin.post(draft["text"])
-            except Exception as e:
-                log.exception("post failed")
-                await context.bot.send_message(self.chat_id, f"⚠️ LinkedIn post failed: {e}")
-                return
-            self.store.update_draft(draft_id, status="posted", posted_urn=urn)
+            # strip the buttons before any slow work: q.answer() returns instantly,
+            # so a second tap can otherwise arrive mid-flight
             await q.edit_message_reply_markup(None)
-            link = f"https://www.linkedin.com/feed/update/{urn}/" if urn.startswith("urn:") else ""
-            await context.bot.send_message(self.chat_id, f"✅ Posted. {link}")
+            if self.cfg.get("image.enabled", True):
+                await self.start_image(context, draft)
+            else:
+                await self.publish(context, draft)
+
+        elif action == "postimg":
+            img = self.store.latest_image(draft_id, status="pending_review")
+            if img is None or not img["path"]:
+                await context.bot.send_message(self.chat_id, "No image is waiting on that draft.")
+                return
+            if draft["status"] == "posted":
+                await q.edit_message_reply_markup(None)
+                return
+            await q.edit_message_reply_markup(None)
+            await self.publish(context, draft, img)
+
+        elif action == "posttxt":
+            if draft["status"] == "posted":
+                await q.edit_message_reply_markup(None)
+                return
+            await q.edit_message_reply_markup(None)
+            img = self.store.latest_image(draft_id, status="pending_review")
+            if img is not None:
+                self.store.update_image(img["id"], status="discarded")
+            await self.publish(context, draft)
+
+        elif action == "regen":
+            await q.edit_message_reply_markup(None)
+            await self.start_image(context, draft)
+
+        elif action == "cancelimg":
+            img = self.store.latest_image(draft_id, status="pending_review")
+            if img is not None:
+                self.store.update_image(img["id"], status="discarded")
+            self.store.update_draft(draft_id, status="pending")
+            await q.edit_message_reply_markup(draft_keyboard(draft_id))
+            await context.bot.send_message(
+                self.chat_id, "⏭ Image dropped — the draft is back on the table.")
 
         elif action == "another":
             await self.converse_turn(context, ANOTHER_STORY_MSG, target=draft, new_draft=True)
@@ -168,8 +339,26 @@ class Bot:
                 f"Updated draft:\n\n{text}"[:4000], reply_markup=draft_keyboard(draft["id"]))
             return
 
+        # an image is on the table → free text steers the next take
+        img = self.store.pending_image(int(self.cfg.get("image.pending_hours", 12)))
+        if img is not None:
+            d = self.store.get_draft(img["draft_id"])
+            if d is not None and d["status"] == "imaging":
+                await self.start_image(context, d, feedback=text)
+                return
+
         # everything else is a conversation turn in the day's session, about the
         # draft you replied to (or the last one you touched)
+        await self.converse_turn(context, text, target=self.target_draft(update))
+
+    async def on_talk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Talk about the text while an image is pending, instead of steering the image."""
+        if not self.allowed(update) or not update.message:
+            return
+        text = " ".join(context.args or []).strip()
+        if not text:
+            await update.message.reply_text("Usage: /talk make it shorter, lead with the number")
+            return
         await self.converse_turn(context, text, target=self.target_draft(update))
 
     async def on_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -198,8 +387,12 @@ class Bot:
             "• draft the one about the idle workloads instead\n"
             "• search today for anything about the payment bug\n"
             "• end this one by asking how others handle it\n\n"
-            "Buttons: Approve posts it · Another angle rewrites it · "
-            "Replace text takes your exact wording · Skip drops it.\n"
+            "Buttons: Approve illustrates it · Another angle rewrites it · "
+            "Replace text takes your exact wording · Skip drops it.\n\n"
+            "Approve doesn't publish. It draws an image for the post and shows it to you; "
+            "nothing reaches LinkedIn until you tap Post with image (or Post text-only). "
+            "While an image is on the table, plain messages steer the picture — "
+            "use /talk to go back to discussing the words.\n"
             "/status shows health.")
 
 
@@ -237,6 +430,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(bot.on_callback))
     app.add_handler(CommandHandler("status", bot.on_status))
     app.add_handler(CommandHandler("help", bot.on_help))
+    app.add_handler(CommandHandler("talk", bot.on_talk))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.on_message))
     log.info("bot polling started")
     app.run_polling(allowed_updates=["message", "callback_query"])

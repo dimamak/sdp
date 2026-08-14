@@ -30,12 +30,38 @@ CREATE TABLE IF NOT EXISTS drafts (
     text TEXT NOT NULL,
     rationale TEXT,
     alternates_json TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending|editing|approved|edited|skipped|posted|failed
+    -- pending|editing|imaging|skipped|posted|failed
+    -- ('approved'/'edited' are legacy values nothing writes any more)
+    -- imaging: you tapped Approve, an image is rendering or waiting for your
+    --          confirmation — nothing has been sent to LinkedIn yet
+    status TEXT NOT NULL DEFAULT 'pending',
     tg_message_id TEXT,
     posted_urn TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- One row per image render attempt; the newest row for a draft is the live
+-- candidate. Earlier takes are kept: the prompt plus the feedback that produced
+-- each one is what you want to look at when the images start feeling samey.
+CREATE TABLE IF NOT EXISTS draft_images (
+    id INTEGER PRIMARY KEY,
+    draft_id INTEGER NOT NULL,
+    n INTEGER NOT NULL DEFAULT 1,           -- take number within the draft, 1-based
+    prompt TEXT,                            -- what the model was asked for, verbatim
+    alt_text TEXT,                          -- LinkedIn content.media.altText
+    feedback TEXT,                          -- your steer that produced this take
+    path TEXT,                              -- local file; NULL once pruned
+    mime TEXT,
+    model TEXT,
+    status TEXT NOT NULL DEFAULT 'ready',   -- ready|pending_review|attached|discarded|failed|pruned
+    li_image_urn TEXT,
+    tg_message_id TEXT,                     -- the confirm message (carries the buttons)
+    tg_photo_message_id TEXT,               -- the photo message itself
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_draft_images_draft ON draft_images(draft_id);
 
 CREATE TABLE IF NOT EXISTS sync_state (
     source TEXT PRIMARY KEY,
@@ -56,16 +82,35 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
+def _ensure_columns(db, table: str, cols: dict[str, str]) -> None:
+    """Additive, idempotent migration for tables that already exist in the wild.
+
+    CREATE TABLE IF NOT EXISTS covers new tables but never new columns, and there
+    is no migration mechanism here. SQLite's ADD COLUMN only accepts constant
+    defaults and no UNIQUE, so keep decls to 'TEXT' / 'INTEGER DEFAULT 0'.
+    """
+    have = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
+    for name, decl in cols.items():
+        if name not in have:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 class Store:
     def __init__(self, store_dir: Path | str):
         self.dir = Path(store_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.files_dir = self.dir / "files"
+        # deliberately a sibling of files/, not a child: prune_old_files() rmtree's
+        # every dated directory under files/, and a posted image is the only local
+        # copy of published creative — LinkedIn won't give it back.
+        self.images_dir = self.dir / "images"
         self.db_path = self.dir / "dailypost.db"
         self.db = sqlite3.connect(self.db_path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        # nothing to backfill today; the hook exists so the next column is a one-liner
+        _ensure_columns(self.db, "drafts", {})
         self.db.commit()
 
     # ---- items -------------------------------------------------------------
@@ -107,6 +152,12 @@ class Store:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def image_path_for(self, day: str, draft_id: int, n: int, ext: str = "jpg") -> Path:
+        """Where take `n` of draft `draft_id` is written. Pure paths — safe anywhere."""
+        d = self.images_dir / day
+        d.mkdir(parents=True, exist_ok=True)
+        return d / f"d{draft_id}-{n}.{ext.lstrip('.')}"
+
     # ---- sync cursors --------------------------------------------------------
     def get_cursor(self, source: str) -> str | None:
         row = self.db.execute("SELECT cursor FROM sync_state WHERE source=?", (source,)).fetchone()
@@ -147,10 +198,19 @@ class Store:
         ).fetchone()
 
     def draft_by_tg_message(self, tg_message_id: str | int) -> sqlite3.Row | None:
-        """Resolve which draft a Telegram reply refers to."""
+        """Resolve which draft a Telegram reply refers to.
+
+        Also matches the photo/confirm messages of the image flow, so replying to
+        either the original draft or the image you're looking at works.
+        """
+        mid = str(tg_message_id)
         return self.db.execute(
-            "SELECT * FROM drafts WHERE tg_message_id=? ORDER BY id DESC LIMIT 1",
-            (str(tg_message_id),),
+            "SELECT d.* FROM drafts d WHERE d.tg_message_id=?"
+            " UNION ALL"
+            " SELECT d.* FROM drafts d JOIN draft_images i ON i.draft_id=d.id"
+            "  WHERE i.tg_message_id=? OR i.tg_photo_message_id=?"
+            " LIMIT 1",
+            (mid, mid, mid),
         ).fetchone()
 
     def latest_draft_for_day(self, day: str) -> sqlite3.Row | None:
@@ -171,3 +231,60 @@ class Store:
         return self.db.execute(
             "SELECT * FROM day_sessions ORDER BY day DESC LIMIT 1"
         ).fetchone()
+
+    def session_for_day(self, day: str) -> str | None:
+        row = self.db.execute(
+            "SELECT session_id FROM day_sessions WHERE day=?", (day,)).fetchone()
+        return row["session_id"] if row else None
+
+    # ---- draft images ---------------------------------------------------------
+    def add_image(self, draft_id: int, n: int, *, prompt: str | None = None,
+                  alt_text: str | None = None, feedback: str | None = None,
+                  path: str | None = None, mime: str | None = None,
+                  model: str | None = None, status: str = "ready",
+                  error: str | None = None) -> int:
+        cur = self.db.execute(
+            "INSERT INTO draft_images(draft_id, n, prompt, alt_text, feedback, path,"
+            " mime, model, status, error) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (draft_id, n, prompt, alt_text, feedback, path, mime, model, status, error),
+        )
+        self.db.commit()
+        return cur.lastrowid
+
+    def update_image(self, image_id: int, **fields) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE draft_images SET {cols} WHERE id=?",
+                        (*fields.values(), image_id))
+        self.db.commit()
+
+    def latest_image(self, draft_id: int, status: str | None = None) -> sqlite3.Row | None:
+        sql = "SELECT * FROM draft_images WHERE draft_id=?"
+        args: tuple = (draft_id,)
+        if status:
+            sql += " AND status=?"
+            args += (status,)
+        return self.db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+
+    def images_for_draft(self, draft_id: int) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM draft_images WHERE draft_id=? ORDER BY n", (draft_id,)).fetchall()
+
+    def pending_image(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """The image currently awaiting your yes/no, if it is still recent.
+
+        The age bound matters: without it a forgotten candidate would swallow every
+        later free-text message forever (the bug latest_editing_draft() still has).
+        """
+        return self.db.execute(
+            "SELECT * FROM draft_images WHERE status='pending_review'"
+            " AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def stale_unposted_images(self, cutoff_iso: str) -> list[sqlite3.Row]:
+        """Old takes that were never published — safe to delete the bytes of."""
+        return self.db.execute(
+            "SELECT * FROM draft_images WHERE path IS NOT NULL"
+            " AND status != 'attached' AND created_at < ?",
+            (cutoff_iso.replace("T", " ").split("+")[0],),
+        ).fetchall()

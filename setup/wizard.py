@@ -566,6 +566,45 @@ def step_linkedin(data: dict) -> None:
         print("  Later: python -m setup.wizard --source linkedin  (or python -m server.bot.linkedin_auth)")
 
 
+def step_image(data: dict) -> None:
+    """Post illustrations via the Gemini API. Only needs an API key."""
+    print("\n== Post images ==")
+    print("  Approve stops publishing directly: it draws an image for the post and")
+    print("  shows it to you, and nothing goes to LinkedIn until you confirm.")
+    print("  Get a key at https://aistudio.google.com/apikey")
+    print("  The image models need BILLING enabled on that key's project — a free")
+    print("  key authenticates fine but returns 429 on every image request.")
+    key = ask("GEMINI_API_KEY (empty = skip, images stay off)", env_get("GEMINI_API_KEY") or "")
+    if not key:
+        data.setdefault("image", {})["enabled"] = False
+        warn("skipped — re-run later with: python -m setup.wizard --source image")
+        return
+    env_set("GEMINI_API_KEY", key)
+
+    img = data.setdefault("image", {})
+    img["enabled"] = True
+    img["provider"] = "gemini"
+    img["model"] = ask("model", img.get("model", "gemini-3-pro-image"))
+    img["aspect_ratio"] = ask("aspect ratio (1:1, 4:5, 16:9…)", img.get("aspect_ratio", "1:1"))
+    img["image_size"] = ask("image size (1K/2K/4K)", img.get("image_size", "2K"))
+
+    if yes("render a test image now? (costs one generation)"):
+        save_data(data)
+        from server.config import Config
+        from server.pipeline.image_gen import ImageGenError, generate_image
+        out = Path(data["store_dir"]) / "images" / "_smoke.jpg"
+        try:
+            got = generate_image(Config.load(str(CONFIG)),
+                                 "a flat editorial illustration of a paper plane over open water,"
+                                 " restrained palette, no text",
+                                 out_path=out)
+            fix_owner(data, str(got.path))
+            ok(f"rendered {got.path} ({got.size_bytes:,} bytes)")
+        except ImageGenError as e:
+            bad(f"render failed [{e.reason}]: {e}"
+                + (f" — {e.detail[:200]}" if e.detail else ""))
+
+
 def step_laptop(data: dict) -> None:
     """Authorize the person's laptop key and print exactly what to run there."""
     print("\n== Laptop access ==")
@@ -815,6 +854,29 @@ def doctor() -> int:
         return f"token ok, {d} days left"
     check("linkedin", _li)
 
+    def _li_rest():
+        """Proves versioned-API access, the LinkedIn-Version header and the person
+        URN, without creating a post. The registered upload URL just expires."""
+        from server.bot.linkedin_client import LinkedInClient
+        LinkedInClient(cfg)._init_image_upload()
+        return f"rest/images ok (version {cfg.get('linkedin.api_version', '202506')})"
+    check("linkedin rest", _li_rest)
+
+    def _gemini():
+        if not cfg.get("image.enabled", True):
+            return "disabled"
+        if not cfg.secret("GEMINI_API_KEY"):
+            raise RuntimeError("GEMINI_API_KEY not set")
+        from google import genai
+        model = str(cfg.get("image.model", "gemini-3-pro-image"))
+        client = genai.Client(api_key=cfg.secret("GEMINI_API_KEY"))
+        client.models.get(model=model)          # validates key + model, spends nothing
+        # deliberately not a render: this proves the key and the model name, NOT
+        # that the project has image quota. A free-tier key passes this and still
+        # 429s on every generation — `--source image` offers a real render.
+        return f"{model} reachable (quota untested)"
+    check("gemini image", _gemini)
+
     def _cron():
         out = subprocess.run(crontab_cmd(cfg.data, "-l"), capture_output=True, text=True)
         tag = f"dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
@@ -837,8 +899,8 @@ def doctor() -> int:
 STEPS = {
     "base": step_base, "claude": step_claude, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
-    "pair": step_pair, "linkedin": step_linkedin, "laptop": step_laptop,
-    "cron": step_cron, "systemd": step_systemd,
+    "pair": step_pair, "linkedin": step_linkedin, "image": step_image,
+    "laptop": step_laptop, "cron": step_cron, "systemd": step_systemd,
 }
 
 
@@ -899,6 +961,11 @@ def _done_linkedin(data):
         return "token present"
 
 
+def _done_image(data):
+    if env_get("GEMINI_API_KEY") and data.get("image", {}).get("enabled"):
+        return f"images on ({data['image'].get('model', 'gemini-3-pro-image')})"
+
+
 def _done_cron(data):
     out = subprocess.run(crontab_cmd(data, "-l"), capture_output=True, text=True)
     if "dailypost-nightly" in out.stdout:
@@ -918,8 +985,8 @@ def _done_laptop(data):
 DONE_PROBES = {
     "base": _done_base, "claude": _done_claude, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
-    "pair": _done_pair, "linkedin": _done_linkedin, "laptop": _done_laptop,
-    "cron": _done_cron, "systemd": _done_systemd,
+    "pair": _done_pair, "linkedin": _done_linkedin, "image": _done_image,
+    "laptop": _done_laptop, "cron": _done_cron, "systemd": _done_systemd,
 }
 
 

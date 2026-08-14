@@ -66,6 +66,75 @@ def converse(cfg, store, day: str, session_id: str, message: str,
     return (data.get("reply") or "").strip() or "(no reply)", post
 
 
+IMAGE_BRIEF_PROMPT = """You wrote a LinkedIn post for {day} and the user has approved the
+text. Now brief an illustration for it.
+
+The post:
+\"\"\"
+{post_text}
+\"\"\"
+{extra}
+You know the story behind this post, not just its words — brief the *story*, one
+single visual idea. Rules for the prompt you write:
+- Describe a scene or composition, concretely. No slide layouts, no infographics.
+- No text, letters, numbers, logos or watermarks anywhere in the image; image
+  models render them badly and LinkedIn readers notice.
+- No recognisable real people, no company branding.
+- No literal screenshots of code, dashboards or chat windows.
+
+Return ONLY a JSON object, no other text:
+{{"image_prompt": "the full prompt for the image model, 1-3 sentences",
+  "alt_text": "one plain sentence describing the finished image, for screen readers"}}
+"""
+
+IMAGE_BRIEF_REVISION = """
+Your previous prompt was:
+\"\"\"
+{prev_prompt}
+\"\"\"
+The user's feedback on the image it produced:
+\"\"\"
+{feedback}
+\"\"\"
+Revise that prompt to address the feedback. Keep everything they didn't complain about.
+"""
+
+
+def image_brief(cfg, day: str, session_id: str | None, post_text: str,
+                feedback: str | None = None,
+                prev_prompt: str | None = None) -> tuple[str, str]:
+    """Ask for an image prompt + alt text for an approved post.
+
+    Resumes the day's session when there is one, so the brief comes from the day's
+    material rather than a re-reading of the post's wording. Falls back to a
+    one-shot call when the session is gone — which happens whenever you approve a
+    draft older than the CLI's session retention.
+
+    Takes plain values, no Store: safe to call from asyncio.to_thread.
+    """
+    extra = ""
+    if feedback:
+        extra = IMAGE_BRIEF_REVISION.format(prev_prompt=prev_prompt or "(not recorded)",
+                                            feedback=feedback)
+    prompt = IMAGE_BRIEF_PROMPT.format(day=day, post_text=post_text, extra=extra)
+
+    if session_id:
+        try:
+            result = run_claude(cfg, prompt, session_id=session_id, resume=True, timeout=300)
+        except Exception as e:
+            log.warning("image brief: session %s unusable (%s) — falling back", session_id, e)
+            result = run_claude(cfg, prompt, timeout=300)
+    else:
+        result = run_claude(cfg, prompt, timeout=300)
+
+    data = extract_json(result)
+    image_prompt = (data.get("image_prompt") or "").strip()
+    if not image_prompt:
+        raise ValueError(f"no image_prompt in response: {result[:300]}")
+    alt = (data.get("alt_text") or "").strip() or "Illustration for this post"
+    return image_prompt, alt
+
+
 def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dict]]:
     """Draft one post per interesting fact found in the day.
 
@@ -98,6 +167,9 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
 
 
 # ---- Telegram delivery (plain Bot API; callbacks handled by the bot service) ----
+# tg_api posts JSON, so it can only carry a file_id or a public URL for a photo.
+# Sending image bytes needs a multipart request (requests' files=) — the bot does
+# that with PTB's send_photo instead; add a branch here if the nightly ever needs it.
 
 def tg_api(cfg, method: str, **params):
     token = cfg.secret("TG_BOT_TOKEN")

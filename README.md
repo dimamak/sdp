@@ -4,8 +4,10 @@ A self-hosted pipeline that harvests one day of your real work — Claude Code
 sessions, WhatsApp/Telegram chats, Gmail, meeting-notetaker emails, screenshots,
 (optionally) call debriefs and audio — asks an LLM to pick the day's best story,
 and delivers a ready-to-publish LinkedIn draft to a private Telegram bot with
-**Approve / Edit / Skip** buttons. On Approve it posts through the official
-LinkedIn *Share on LinkedIn* API (`w_member_social`). Never auto-publishes.
+**Approve / Edit / Skip** buttons. Approve draws an illustration for the post and
+shows it to you first — **nothing reaches LinkedIn until a second tap**. Publishing
+goes through the official *Share on LinkedIn* API (`w_member_social`).
+Never auto-publishes.
 
 Runs on any Linux server + optional laptop; nothing instance-specific is in the
 code — everything lives in `config.yaml` / `.env` (both git-ignored).
@@ -15,7 +17,8 @@ code — everything lives in `config.yaml` / `.env` (both git-ignored).
 ```
 laptop ──(nightly tar-over-ssh)──▶ ingest/           screenshots, Claude JSONL, audio
 server harvesters ───────────────▶ SQLite store      telegram, gmail, whatsapp, claude sessions
-nightly cron: digest ─▶ claude -p ─▶ draft ─▶ Telegram bot ─▶ [Approve] ─▶ LinkedIn post
+nightly cron: digest ─▶ claude -p ─▶ draft ─▶ Telegram bot
+                                             └▶ [Approve] ─▶ image ─▶ [Post] ─▶ LinkedIn
 ```
 
 - **Claude Code sessions** are read from `~/.claude/projects/**/*.jsonl` — locally,
@@ -25,6 +28,33 @@ nightly cron: digest ─▶ claude -p ─▶ draft ─▶ Telegram bot ─▶ [A
   (unofficial client — low but nonzero ToS/ban risk; never send through it).
 - **The LLM step** uses the `claude` CLI headlessly with your existing Claude Code
   credentials ($0 marginal), or `ANTHROPIC_API_KEY` if you prefer the API.
+
+## Images
+
+Tapping **Approve** no longer publishes. It asks the *same Claude session that wrote
+the post* for an image brief — so the picture comes from the day's story, not from a
+re-reading of the post's wording — renders it with the Gemini API, and sends it back
+with **Post with image · Regenerate · Post text-only · Cancel**.
+
+While an image is on the table, plain messages steer it ("more abstract, no people",
+"colder palette") and each reply is a new take. `/talk <message>` goes back to
+discussing the words instead. Regenerating never touches LinkedIn; only the final
+tap does.
+
+- Needs `GEMINI_API_KEY` in `.env` — get one at
+  [aistudio.google.com/apikey](https://aistudio.google.com/apikey). **The image
+  models require billing enabled on that key's project**; a free-tier key
+  authenticates fine and then returns 429 on every render.
+- Roughly $0.13–0.24 per render at `gemini-3-pro-image`, so a few dollars a month
+  at one post a day. `image.model: gemini-3.1-flash-image` is ~3× cheaper.
+- Turn it off with `image.enabled: false` — Approve then publishes in one tap, as
+  it used to. Any render failure also offers *Post text-only*, so you are never
+  stuck with an approved draft you can't publish.
+- Images live in `<store_dir>/images/<day>/`. Published ones are kept forever
+  (LinkedIn won't give them back); unused takes are pruned after
+  `image.retention_days`.
+
+Set it up with `.venv/bin/python -m setup.wizard --source image`.
 
 ## Setup
 
@@ -47,7 +77,8 @@ powershell -ExecutionPolicy Bypass -File setup\wizard_laptop.ps1
 
 The wizard handles: directories, venv, cron, systemd bot service, Telegram login
 (Telethon), bot chat-id detection, WAHA docker + QR pairing, Gmail OAuth guidance,
-LinkedIn OAuth guidance. Every step is re-runnable: `python -m setup.wizard --source telegram`.
+LinkedIn OAuth guidance, Gemini image key. Every step is re-runnable:
+`python -m setup.wizard --source telegram`.
 
 ## Several people on one server
 
@@ -84,7 +115,10 @@ does this for you). Key ideas:
   freely. Types: `claude_projects_dir`, `claude_sessions` (with filter strategies
   `all | sql | command | id_file`), `ingest_dir`, `telegram`, `gmail`, `whatsapp`.
 - `pipeline:` timezone, cron, size caps, model.
-- Style/voice of the drafts: edit `server/pipeline/prompts/style-guide.md`.
+- `image:` illustration model, aspect ratio, size, regeneration cap — or
+  `enabled: false` to skip the image step entirely.
+- Style/voice of the drafts: edit `server/pipeline/prompts/style-guide.md`; the
+  look of the images: `image.style_suffix` in `config.yaml`.
 
 ## Privacy & safety notes
 
