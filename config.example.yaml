@@ -135,9 +135,12 @@ image:
   retention_days: 30                   # prune UNPOSTED takes; images actually published
                                        # are kept forever (the only local copy)
   # Appended to every prompt — your house look. Keep it short and visual.
+  # The full-frame clause is load-bearing: asked for a cinematic look, the model
+  # paints black letterbox bars into the canvas and they show as dead bands.
   style_suffix: >
     Editorial illustration, restrained palette, generous negative space,
     no text, no logos, no recognisable real people.
+    Fills the entire frame edge to edge — no letterboxing, no black bars, no borders.
 
 # Laptop side (read by wizard_laptop.ps1 to generate laptop/push.conf; the bash
 # push script itself reads push.conf, not this file)

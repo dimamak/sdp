@@ -58,6 +58,18 @@ def escape_commentary(text: str) -> str:
     return "".join(out)
 
 
+def feed_url(urn: str) -> str:
+    """Browsable permalink for a post URN.
+
+    /rest/posts hands back urn:li:share:N (or urn:li:ugcPost:N), but the feed
+    permalink resolves an *activity* URN — the wrapper LinkedIn uses to represent
+    a share in the feed. Linking the share URN gives a URL that 404s even though
+    the post is live. The numeric id is shared between the two, so swap the type.
+    """
+    n = urn.rpartition(":")[2]
+    return f"https://www.linkedin.com/feed/update/urn:li:activity:{n}/" if n.isdigit() else ""
+
+
 def _fail(r: requests.Response, what: str) -> None:
     """Raise with LinkedIn's own explanation, which is usually specific."""
     try:
@@ -263,7 +275,7 @@ def main(argv=None) -> int:
 
     if args.test_post:
         urn, image_urn = client.post(args.text, args.image, "self-test image")
-        print(f"published {urn}  https://www.linkedin.com/feed/update/{urn}/")
+        print(f"published {urn}  {feed_url(urn)}")
         if args.delete_after:
             client.delete_post(urn)
             print("deleted.")

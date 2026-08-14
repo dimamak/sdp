@@ -81,6 +81,10 @@ single visual idea. Rules for the prompt you write:
   models render them badly and LinkedIn readers notice.
 - No recognisable real people, no company branding.
 - No literal screenshots of code, dashboards or chat windows.
+- The composition must fill the whole frame, edge to edge. Never ask for a
+  cinematic, widescreen, anamorphic or film-still look: the model answers those
+  by painting black letterbox bars into the canvas, which show up as dead bands
+  in the feed. Frame the scene to the canvas shape instead.
 - Write it in this house style, and open the prompt by naming that style — a
   detailed scene description otherwise overrides a style note tacked on the end:
   {style}

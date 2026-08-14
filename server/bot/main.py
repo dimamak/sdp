@@ -30,7 +30,7 @@ from ..pipeline.draft import converse, image_brief
 from ..pipeline.image_gen import ImageGenError, generate_image
 from ..store import Store
 from ..util import get_logger
-from .linkedin_client import LinkedInClient
+from .linkedin_client import LinkedInClient, feed_url
 
 log = get_logger("bot")
 
@@ -244,7 +244,7 @@ class Bot:
             self.store.update_draft(draft_id, status="posted", posted_urn=urn)
             if img is not None:
                 self.store.update_image(img["id"], status="attached", li_image_urn=image_urn)
-            link = f"https://www.linkedin.com/feed/update/{urn}/" if urn.startswith("urn:") else ""
+            link = feed_url(urn)
             await note.edit_text(f"✅ Posted{' with image' if img else ''}. {link}")
 
     # ---- handlers ------------------------------------------------------------
