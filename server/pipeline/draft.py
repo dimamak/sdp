@@ -81,6 +81,9 @@ single visual idea. Rules for the prompt you write:
   models render them badly and LinkedIn readers notice.
 - No recognisable real people, no company branding.
 - No literal screenshots of code, dashboards or chat windows.
+- Write it in this house style, and open the prompt by naming that style — a
+  detailed scene description otherwise overrides a style note tacked on the end:
+  {style}
 
 Return ONLY a JSON object, no other text:
 {{"image_prompt": "the full prompt for the image model, 1-3 sentences",
@@ -116,7 +119,8 @@ def image_brief(cfg, day: str, session_id: str | None, post_text: str,
     if feedback:
         extra = IMAGE_BRIEF_REVISION.format(prev_prompt=prev_prompt or "(not recorded)",
                                             feedback=feedback)
-    prompt = IMAGE_BRIEF_PROMPT.format(day=day, post_text=post_text, extra=extra)
+    style = str(cfg.get("image.style_suffix", "") or "").strip() or "no particular house style"
+    prompt = IMAGE_BRIEF_PROMPT.format(day=day, post_text=post_text, extra=extra, style=style)
 
     if session_id:
         try:
