@@ -134,6 +134,12 @@ image:
                                        # image feedback (bot restarts, forgotten drafts)
   retention_days: 30                   # prune UNPOSTED takes; images actually published
                                        # are kept forever (the only local copy)
+  strip_content_credentials: true      # drop the C2PA metadata Gemini attaches, which
+                                       # LinkedIn renders as a "Cr" badge over the image.
+                                       # Lossless (one APP11 segment removed, pixels
+                                       # untouched). The SynthID watermark is in the
+                                       # pixels and stays either way — this removes the
+                                       # visible disclosure, not the detectability.
   # Appended to every prompt — your house look. Keep it short and visual.
   # The full-frame clause is load-bearing: asked for a cinematic look, the model
   # paints black letterbox bars into the canvas and they show as dead bands.

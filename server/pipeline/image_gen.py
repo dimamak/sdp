@@ -119,6 +119,44 @@ def _render(client, model: str, prompt: str, aspect_ratio: str, image_size: str,
     return raw, mime, " ".join(notes).strip()
 
 
+def strip_content_credentials(data: bytes) -> bytes:
+    """Drop the C2PA provenance metadata from a JPEG.
+
+    Gemini attaches Content Credentials as an APP11 JUMBF segment; LinkedIn reads
+    it and renders the "Cr" badge over the image. This removes that segment only —
+    tables and the compressed scan are copied verbatim, so it is lossless and needs
+    no image library. Anything unexpected in the structure returns the input
+    unchanged rather than risking a corrupt file.
+
+    The SynthID watermark lives in the pixels, not the metadata, and is unaffected:
+    this removes the visible disclosure, not the detectability.
+    """
+    if not data.startswith(b"\xff\xd8"):
+        return data
+    out, i, n = bytearray(data[:2]), 2, len(data)
+    try:
+        while i < n:
+            if data[i] != 0xFF:
+                return data                      # not on a marker boundary — bail
+            m = data[i + 1]
+            if m == 0xDA:                        # start of scan: copy the rest as-is
+                out += data[i:]
+                return bytes(out)
+            if m == 0xD9 or 0xD0 <= m <= 0xD7:
+                out += data[i:i + 2]
+                i += 2
+                continue
+            length = int.from_bytes(data[i + 2:i + 4], "big")
+            if length < 2 or i + 2 + length > n:
+                return data
+            if m != 0xEB:                        # keep everything except APP11
+                out += data[i:i + 2 + length]
+            i += 2 + length
+    except IndexError:
+        return data
+    return bytes(out)
+
+
 def _classify(e: Exception) -> ImageGenError:
     """Map an SDK exception onto something the bot can show and act on."""
     from google.genai import errors
@@ -185,6 +223,12 @@ def generate_image(cfg, prompt: str, *, out_path: Path, aspect_ratio: str | None
             log.warning("render attempt %d failed (%s), retrying in %.0fs",
                         attempt, last.reason, backoff)
             time.sleep(backoff)
+
+    if mime == "image/jpeg" and cfg.get("image.strip_content_credentials", True):
+        stripped = strip_content_credentials(raw)
+        if len(stripped) < len(raw):
+            log.info("stripped %d bytes of content credentials", len(raw) - len(stripped))
+            raw = stripped
 
     out_path = out_path.with_suffix("." + EXT_BY_MIME.get(mime, "jpg"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
