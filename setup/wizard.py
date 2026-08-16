@@ -548,15 +548,25 @@ def step_pair(data: dict) -> None:
 
 def step_linkedin(data: dict) -> None:
     print("\n== LinkedIn ==")
-    print("  Create an app at https://developer.linkedin.com (products: 'Share on LinkedIn'")
-    print("  + 'Sign In with LinkedIn using OpenID Connect'); add redirect URL")
-    print("  http://localhost:8917/callback")
-    client_id = ask("LINKEDIN_CLIENT_ID (empty = skip for now)", env_get("LINKEDIN_CLIENT_ID") or "")
-    if not client_id:
-        warn("skipped — re-run later with: python -m setup.wizard --source linkedin")
-        return
-    env_set("LINKEDIN_CLIENT_ID", client_id)
-    env_set("LINKEDIN_CLIENT_SECRET", ask("LINKEDIN_CLIENT_SECRET", env_get("LINKEDIN_CLIENT_SECRET") or ""))
+    have_id, have_secret = env_get("LINKEDIN_CLIENT_ID"), env_get("LINKEDIN_CLIENT_SECRET")
+    if have_id and have_secret:
+        # One app serves everyone: client id/secret identify the APPLICATION, while
+        # the access token is issued per member. A second person does not need
+        # their own app — only their own authorization.
+        ok(f"using existing app credentials (client id {have_id[:6]}…)")
+        print("  Nothing to create — you only authorize as yourself below.")
+    else:
+        print("  Create an app at https://developer.linkedin.com (products: 'Share on LinkedIn'")
+        print("  + 'Sign In with LinkedIn using OpenID Connect'); add redirect URL")
+        print("  http://localhost:8917/callback")
+        print("  Sharing an app with another person on this server is fine — paste")
+        print("  the SAME client id/secret; the token you get is still yours alone.")
+        client_id = ask("LINKEDIN_CLIENT_ID (empty = skip for now)", have_id or "")
+        if not client_id:
+            warn("skipped — re-run later with: python -m setup.wizard --source linkedin")
+            return
+        env_set("LINKEDIN_CLIENT_ID", client_id)
+        env_set("LINKEDIN_CLIENT_SECRET", ask("LINKEDIN_CLIENT_SECRET", have_secret or ""))
     # Refuse to offer a path outside this instance's store: that is how one
     # instance ends up authenticating — and posting — as another person.
     own_default = f"{data['store_dir']}/linkedin-token.json"
