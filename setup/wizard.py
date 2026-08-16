@@ -846,6 +846,15 @@ def doctor() -> int:
 
     def _li():
         from server.bot.linkedin_client import LinkedInClient
+        # A token borrowed from another instance authenticates fine and posts to
+        # SOMEONE ELSE'S account — the failure only shows up on their feed, so
+        # check ownership before reporting the token healthy.
+        tf = cfg.path_of("linkedin.token_file")
+        store_dir = cfg.path_of("store_dir")
+        if tf and store_dir and store_dir.resolve() not in tf.resolve().parents:
+            raise RuntimeError(
+                f"token_file {tf} is outside this instance's store {store_dir} — "
+                "it belongs to another instance and would post to their account")
         d = LinkedInClient(cfg).days_until_expiry()
         if d is None:
             raise RuntimeError("no token — run linkedin_auth")
