@@ -4,8 +4,10 @@
 # Start with:  systemctl enable --now dailypost-bot@<instance>
 [Unit]
 Description=dailypost approval bot (%i)
-After=network-online.target
-Wants=network-online.target
+# docker.service too: the WAHA webhook binds the docker bridge gateway, which
+# does not exist until docker has created docker0
+After=network-online.target docker.service
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple

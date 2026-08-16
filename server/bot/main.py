@@ -408,10 +408,24 @@ def start_waha_webhook(cfg: Config):
     host = str(src.get("webhook_host", "127.0.0.1"))
 
     def run():
+        import time
+
         import uvicorn
         from .waha_webhook import build_app
         app = build_app(cfg, Store(cfg.path_of("store_dir")))  # own Store: sqlite per-thread
-        uvicorn.run(app, host=host, port=port, log_level="warning")
+        # At boot the docker bridge may not exist yet, so binding to the gateway
+        # address fails. Uvicorn exits on that, which used to kill this thread for
+        # good: Telegram kept working (outbound polling) while WhatsApp captured
+        # nothing until someone noticed. Keep retrying instead.
+        for attempt in range(1, 61):
+            try:
+                uvicorn.run(app, host=host, port=port, log_level="warning")
+                return  # served and shut down cleanly
+            except (SystemExit, OSError) as e:
+                log.warning("webhook bind on %s:%d failed (attempt %d): %s",
+                            host, port, attempt, e or "address unavailable")
+                time.sleep(10)
+        log.error("giving up binding the WAHA webhook on %s:%d", host, port)
 
     threading.Thread(target=run, daemon=True, name="waha-webhook").start()
     log.info("WAHA webhook listening on %s:%d", host, port)

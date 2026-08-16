@@ -2,8 +2,10 @@
 # (placeholders __APP_DIR__ / __USER__ are substituted at install time)
 [Unit]
 Description=dailypost approval bot (Telegram long-poll + WAHA webhook)
-After=network-online.target
-Wants=network-online.target
+# docker.service too: the WAHA webhook binds the docker bridge gateway, which
+# does not exist until docker has created docker0
+After=network-online.target docker.service
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple
