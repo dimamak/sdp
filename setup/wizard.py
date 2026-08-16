@@ -112,6 +112,13 @@ def load_data() -> dict:
     data["sources"] = []
     for k in ("install_root", "store_dir", "ingest_dir", "logs_dir", "run_as_user"):
         data.pop(k, None)
+    # Credential paths must never be inherited either. A second instance that
+    # kept the example's linkedin.token_file pointed at the FIRST instance's
+    # store: it posted to that person's account, and had its own OAuth ever
+    # completed it would have overwritten their token.
+    for section, key in (("linkedin", "token_file"), ("image", "token_file")):
+        if isinstance(data.get(section), dict):
+            data[section].pop(key, None)
     return data
 
 
@@ -550,8 +557,15 @@ def step_linkedin(data: dict) -> None:
         return
     env_set("LINKEDIN_CLIENT_ID", client_id)
     env_set("LINKEDIN_CLIENT_SECRET", ask("LINKEDIN_CLIENT_SECRET", env_get("LINKEDIN_CLIENT_SECRET") or ""))
-    data.setdefault("linkedin", {})["token_file"] = ask(
-        "token file path", data.get("linkedin", {}).get("token_file", f"{data['store_dir']}/linkedin-token.json"))
+    # Refuse to offer a path outside this instance's store: that is how one
+    # instance ends up authenticating — and posting — as another person.
+    own_default = f"{data['store_dir']}/linkedin-token.json"
+    current = data.get("linkedin", {}).get("token_file")
+    if current and not str(current).startswith(str(data["store_dir"]).rstrip("/") + "/"):
+        warn(f"configured token_file {current} is outside this instance's store — "
+             f"defaulting to {own_default}")
+        current = None
+    data.setdefault("linkedin", {})["token_file"] = ask("token file path", current or own_default)
     if yes("run the OAuth now? (a URL is shown — open it in your laptop browser, approve,\n"
            "  then paste the localhost redirect URL from the address bar back here)"):
         save_data(data)  # linkedin_auth reads token_file path from config.yaml
