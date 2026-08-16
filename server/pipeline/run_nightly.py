@@ -13,12 +13,29 @@ from pathlib import Path
 from ..config import Config
 from ..harvest import collect_all
 from ..store import Store
-from ..util import get_logger, target_day, window_start_iso
+from ..util import get_logger, local_tz, target_day, window_start_iso
 from .digest import build_digest
 from .draft import deliver_drafts, notify, write_drafts
 from .transcribe import transcribe_pending
 
 log = get_logger("nightly")
+
+
+def laptop_checked_in_since(cfg, since: datetime) -> bool:
+    """Has a laptop pushed (or reported 'nothing new') since `since`?
+
+    push_daily.sh writes .heartbeat-<host> next to the ingest spool on every run,
+    including empty ones — a machine that was asleep at 23:00 writes nothing, and
+    that is the case worth waiting for.
+    """
+    ingest = cfg.path_of("ingest_dir")
+    if not ingest or not ingest.exists():
+        return False
+    beats = list(ingest.glob(".heartbeat-*"))
+    if not beats:
+        return False
+    newest = max(b.stat().st_mtime for b in beats)
+    return datetime.fromtimestamp(newest, tz=timezone.utc) >= since
 
 
 def prune_old_files(cfg, store) -> None:
@@ -62,12 +79,21 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="harvest + digest only; no draft, no Telegram")
     ap.add_argument("--config", default=None)
     ap.add_argument("--day", default=None, help="override target day (YYYY-MM-DD)")
+    ap.add_argument("--force", action="store_true",
+                    help="draft even if the day is already drafted or the laptop "
+                         "has not checked in")
     args = ap.parse_args(argv)
 
     cfg = Config.load(args.config)
     store = Store(cfg.path_of("store_dir"))
     day = args.day or target_day(cfg)
     since = datetime.fromisoformat(window_start_iso(cfg))
+
+    # Runs are scheduled repeatedly through the morning so a late laptop still
+    # gets included; once a day has drafts, the rest of those attempts are no-ops.
+    if store.has_drafts_for_day(day) and not args.force and not args.dry_run:
+        log.info("%s already has drafts — nothing to do", day)
+        return 0
 
     log.info("nightly run for %s (window since %s)", day, since)
     results = collect_all(cfg, store, since)
@@ -80,6 +106,21 @@ def main(argv=None) -> int:
             log.info("transcribed %d audio file(s)", n)
     except Exception:
         log.exception("transcription failed — continuing without it")
+
+    # Drafting once, on partial data, is worse than drafting later on all of it:
+    # the laptop carries the coding sessions, screenshots and office audio. If it
+    # was asleep at 23:00, hold off until it checks in — but never past the
+    # deadline, or a laptop left off all week would mean no posts at all.
+    if not args.force and not args.dry_run and cfg.get("pipeline.wait_for_laptop", True):
+        deadline_hour = int(cfg.get("pipeline.wait_deadline_hour", 12))
+        local_now = datetime.now(local_tz(cfg))
+        if not laptop_checked_in_since(cfg, since):
+            if local_now.hour < deadline_hour:
+                log.info("laptop has not checked in since %s — deferring drafts for %s "
+                         "(deadline %02d:00 local)", since, day, deadline_hour)
+                return 0
+            log.warning("laptop still has not checked in, but it is past %02d:00 — "
+                        "drafting %s without it", deadline_hour, day)
 
     digest, item_ids = build_digest(cfg, store, day)
     log.info("digest: %d chars from %d items", len(digest), len(item_ids))

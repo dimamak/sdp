@@ -9,10 +9,21 @@ run_as_user: youruser                 # non-root user that owns everything and r
 
 pipeline:
   timezone: Asia/Jerusalem            # day boundaries + "yesterday" logic
-  cron_utc: "30 0 * * *"              # nightly run (server crontab, UTC)
+  cron_utc: "30 0-9 * * *"            # server crontab, UTC. A RANGE of hours, not
+                                      # one: attempts repeat until the laptop has
+                                      # checked in, then stop (a drafted day is a
+                                      # no-op). Keep the last hour before
+                                      # wait_deadline_hour in local time.
   window_hours: 26                    # how far back the digest looks for un-used items
   digest_max_chars: 400000            # hard cap on digest size fed to the LLM
   per_item_max_chars: 4000            # cap per harvested item in the digest
+  # The laptop carries coding sessions, screenshots and office audio, so drafting
+  # before it has pushed throws away the day's best material. If it was asleep at
+  # the scheduled hour, wait for its morning push instead — the cron runs on a
+  # range of hours and the first attempt with data does the work.
+  wait_for_laptop: true
+  wait_deadline_hour: 12              # local hour after which we draft regardless,
+                                      # so a laptop left off all week still posts
   max_drafts: 4                       # how many stories to draft per day (one message each)
   model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
   claude_bin: claude                  # path to the claude CLI

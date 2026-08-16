@@ -213,6 +213,13 @@ class Store:
             (mid, mid, mid),
         ).fetchone()
 
+    def has_drafts_for_day(self, day: str) -> bool:
+        """Used to keep repeated runs idempotent: once a day has been drafted,
+        later attempts do nothing rather than delivering a second set."""
+        return self.db.execute(
+            "SELECT 1 FROM drafts WHERE day=? LIMIT 1", (day,)
+        ).fetchone() is not None
+
     def latest_draft_for_day(self, day: str) -> sqlite3.Row | None:
         return self.db.execute(
             "SELECT * FROM drafts WHERE day=? ORDER BY id DESC LIMIT 1", (day,)

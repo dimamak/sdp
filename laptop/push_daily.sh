@@ -60,8 +60,20 @@ for i in "${!NAMES[@]}"; do
   done < <("${finder[@]}" 2>/dev/null)
 done
 
+# Heartbeat: tells the server this laptop has checked in, so the nightly can wait
+# for a machine that was asleep at 23:00 instead of drafting without its data.
+# Written even when there is nothing new — "nothing to send" is still a check-in.
+heartbeat() {
+  local dir host
+  dir="$(dirname "$REMOTE_DIR")"
+  host="$(hostname | tr -cd '[:alnum:]._-')"
+  ssh -o BatchMode=yes "$REMOTE" \
+    "mkdir -p '$dir' && date -u +%Y-%m-%dT%H:%M:%SZ > '$dir/.heartbeat-$host'" 2>/dev/null || true
+}
+
 if [[ $total -eq 0 ]]; then
   echo "nothing new to push"
+  [[ $DRY_RUN -eq 1 ]] || heartbeat
   touch "$STAMP"
   exit 0
 fi
@@ -75,5 +87,6 @@ fi
 remote_cmd="mkdir -p '$REMOTE_DIR' && tar xzf - -C '$REMOTE_DIR'"
 [[ -n "$REMOTE_POST_CMD" ]] && remote_cmd="$remote_cmd && $REMOTE_POST_CMD"
 tar czf - -C "$STAGE" . | ssh -o BatchMode=yes "$REMOTE" "$remote_cmd"
+heartbeat
 touch "$STAMP"
 echo "done"
