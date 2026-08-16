@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from pathlib import Path
 
 import requests
 
@@ -34,6 +35,15 @@ def main(argv=None) -> int:
     ap.add_argument("--port", type=int, default=8917)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--config", default=None)
+    # The interactive paste-back assumes the person authorizing is sitting at
+    # this terminal. When they are not — a teammate on their own laptop, or the
+    # app already registered so only their consent is missing — these two split
+    # it into steps that can be sent and answered separately.
+    ap.add_argument("--print-url", action="store_true",
+                    help="print the authorization URL and exit (send it to whoever "
+                         "is authorizing; they need no app of their own)")
+    ap.add_argument("--exchange", metavar="REDIRECT_URL_OR_CODE", default=None,
+                    help="finish auth from the pasted redirect URL (or a bare code)")
     args = ap.parse_args(argv)
 
     cfg = Config.load(args.config)
@@ -50,8 +60,29 @@ def main(argv=None) -> int:
         "redirect_uri": redirect_uri, "state": state, "scope": SCOPES,
     })
 
+    token_file = cfg.path_of("linkedin.token_file")
+
+    if args.print_url:
+        print(url)
+        print()
+        print(f"Open it signed in as the person this instance posts for "
+              f"(use a private window if another account is active).")
+        print("Approve, then copy the whole localhost URL from the address bar "
+              "— it will not load, that is expected — and run:")
+        print(f'  python -m server.bot.linkedin_auth --exchange "<that URL>"')
+        print(f"Token will be written to: {token_file}")
+        return 0
+
     code_holder = {}
-    if args.no_browser:
+    if args.exchange:
+        pasted = args.exchange.strip()
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query)
+        if "error" in q:
+            print(f"authorization was refused: {q.get('error_description', q['error'])[0]}")
+            return 1
+        # accept a bare code too, so pasting just the value works
+        code_holder["code"] = q["code"][0] if "code" in q else pasted
+    elif args.no_browser:
         print(f"\nOpen this URL in any browser:\n\n{url}\n")
         pasted = input("Paste the FULL redirect URL you were sent to: ").strip()
         q = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query)
@@ -83,7 +114,12 @@ def main(argv=None) -> int:
         "grant_type": "authorization_code", "code": code_holder["code"],
         "redirect_uri": redirect_uri, "client_id": client_id, "client_secret": client_secret,
     }, timeout=30)
-    r.raise_for_status()
+    if r.status_code >= 300:
+        # by far the most common cause: the code was already used, or expired
+        print(f"token exchange failed {r.status_code}: {r.text[:300]}")
+        print("Authorization codes are single-use and short-lived — "
+              "run --print-url again for a fresh one.")
+        return 1
     tok = r.json()
 
     ui = requests.get("https://api.linkedin.com/v2/userinfo",
@@ -91,7 +127,6 @@ def main(argv=None) -> int:
     ui.raise_for_status()
     sub = ui.json()["sub"]
 
-    token_file = cfg.path_of("linkedin.token_file")
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(json.dumps({
         "access_token": tok["access_token"],
@@ -102,6 +137,19 @@ def main(argv=None) -> int:
     token_file.chmod(0o600)
     print(f"Token saved to {token_file} (expires in {tok.get('expires_in', 0)//86400} days). "
           f"Author: urn:li:person:{sub}")
+
+    # Authorizing while signed in as the wrong person is silent and only shows up
+    # later, as posts on someone else's feed. Say whose account this is.
+    for other in sorted(Path("/opt/dailypost").glob("*/linkedin-token.json")):
+        if other.resolve() == token_file.resolve():
+            continue
+        try:
+            them = json.loads(other.read_text()).get("person_urn")
+        except Exception:
+            continue
+        if them == f"urn:li:person:{sub}":
+            print(f"WARNING: this is the SAME account as {other} — you were signed "
+                  "in as that person. Sign out (or use a private window) and redo.")
     return 0
 
 
