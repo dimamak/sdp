@@ -61,13 +61,15 @@ def escape_commentary(text: str) -> str:
 def feed_url(urn: str) -> str:
     """Browsable permalink for a post URN.
 
-    /rest/posts hands back urn:li:share:N (or urn:li:ugcPost:N), but the feed
-    permalink resolves an *activity* URN — the wrapper LinkedIn uses to represent
-    a share in the feed. Linking the share URN gives a URL that 404s even though
-    the post is live. The numeric id is shared between the two, so swap the type.
+    Use the URN exactly as /rest/posts returned it. An earlier version rewrote
+    urn:li:share:N to urn:li:activity:N on the theory that the two share a
+    numeric id — they do not. Checked against a live post: the share URN
+    resolves (og:url points at the real /posts/... permalink) while the same
+    number as an activity URN lands on LinkedIn's sign-up page, because that
+    post's actual activity id was a different number entirely.
     """
-    n = urn.rpartition(":")[2]
-    return f"https://www.linkedin.com/feed/update/urn:li:activity:{n}/" if n.isdigit() else ""
+    urn = (urn or "").strip()
+    return f"https://www.linkedin.com/feed/update/{urn}/" if urn.startswith("urn:li:") else ""
 
 
 def _fail(r: requests.Response, what: str) -> None:
