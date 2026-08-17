@@ -62,10 +62,15 @@ def run_claude(cfg, prompt: str, *, allow_read_dirs: list[str] | None = None,
     )
     if proc.returncode != 0:
         # the CLI reports some failures on stdout with an empty stderr, so an
-        # error built from stderr alone reads as a blank mystery
+        # error built from stderr alone reads as a blank mystery. Log the argv and
+        # which credential was used too: identical-looking failures have turned
+        # out to differ by session, tools, or auth source.
+        cred = ("CLAUDE_CODE_OAUTH_TOKEN" if oauth else
+                "ANTHROPIC_API_KEY" if key else "~/.claude/.credentials.json")
+        log.error("claude -p failed rc=%s cred=%s argv=%s", proc.returncode, cred, cmd)
         raise RuntimeError(
-            f"claude -p failed (rc={proc.returncode}) "
-            f"stderr={proc.stderr[:600]!r} stdout={proc.stdout[:600]!r}")
+            f"claude -p failed (rc={proc.returncode}, auth via {cred}) "
+            f"stderr={proc.stderr[:400]!r} stdout={proc.stdout[:400]!r}")
     data = json.loads(proc.stdout)
     if data.get("is_error"):
         raise RuntimeError(f"claude -p returned error: {str(data.get('result'))[:1000]}")
