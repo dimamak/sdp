@@ -771,6 +771,17 @@ def doctor() -> int:
         [str(cfg.get("pipeline.claude_bin", "claude")), "--version"],
         capture_output=True, text=True, check=True).stdout.strip())
 
+    def _claude_auth():
+        """Actually call the model. `--version` passes on a revoked token, and so
+        does `auth status` — it reports the local credentials file, not whether
+        the server still honours it. Only a real request tells the truth."""
+        from server.pipeline.claude_cli import run_claude
+        out = run_claude(cfg, "Reply with exactly: OK", timeout=120)
+        if "OK" not in out:
+            raise RuntimeError(f"unexpected reply: {out[:120]!r}")
+        return "authenticated (test prompt answered)"
+    check("claude auth", _claude_auth)
+
     def _store_isolation():
         """Two instances sharing a store would write into one dailypost.db and
         mix their items, drafts and sessions together."""
