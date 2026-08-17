@@ -22,7 +22,7 @@ $bash = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $bash) { throw "Git Bash not found - install Git for Windows" }
 
-# bash-style path (C:\x\y -> /c/x/y) — PS 5.1 compatible
+# bash-style path (C:\x\y -> /c/x/y) - PS 5.1 compatible
 function ConvertTo-BashPath([string]$p) {
     $p = $p -replace "\\", "/"
     if ($p -match "^([A-Za-z]):(.*)$") { return "/" + $Matches[1].ToLower() + $Matches[2] }
