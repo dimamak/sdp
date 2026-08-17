@@ -921,6 +921,39 @@ def doctor() -> int:
         return f"{model} reachable (quota untested)"
     check("gemini image", _gemini)
 
+    def _cron_window():
+        """The retry slots must all fall before local noon.
+
+        target_day() reports 'yesterday' only until 12:00 local; a slot at or
+        after that flips to today and drafts a SECOND set for a day already
+        posted. The deadline must also land inside the window, or a laptop that
+        never checks in is never drafted for at all."""
+        import re as _re
+        from zoneinfo import ZoneInfo
+        from datetime import datetime, timezone as _tz
+        sched = str(cfg.get("pipeline.cron_utc", ""))
+        m = _re.match(r"^(\d+)\s+([0-9,\-*/]+)", sched)
+        if not m:
+            return f"schedule {sched!r} not parsed — check it by hand"
+        minute, hours = int(m.group(1)), m.group(2)
+        last_utc = int(hours.split("-")[-1].split(",")[-1]) if hours != "*" else 23
+        tzname = str(cfg.get("pipeline.timezone", "UTC"))
+        off = datetime.now(_tz.utc).astimezone(ZoneInfo(tzname)).utcoffset().total_seconds() / 3600
+        last_local = (last_utc + off) % 24
+        deadline = int(cfg.get("pipeline.wait_deadline_hour", 12))
+        if last_local >= 12:
+            raise RuntimeError(
+                f"last cron slot is {int(last_local):02d}:{minute:02d} local — at or after "
+                "noon target_day() moves to today, so it drafts a second set for a "
+                "day already handled. End the range before local noon.")
+        if cfg.get("pipeline.wait_for_laptop", True) and deadline > last_local:
+            raise RuntimeError(
+                f"wait_deadline_hour {deadline} is after the last slot "
+                f"({int(last_local):02d}:{minute:02d} local) — a laptop that never checks "
+                "in would never be drafted for")
+        return f"slots end {int(last_local):02d}:{minute:02d} local, deadline {deadline}:00"
+    check("cron window", _cron_window)
+
     def _cron():
         out = subprocess.run(crontab_cmd(cfg.data, "-l"), capture_output=True, text=True)
         tag = f"dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
