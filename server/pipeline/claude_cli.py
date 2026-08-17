@@ -36,9 +36,23 @@ def run_claude(cfg, prompt: str, *, allow_read_dirs: list[str] | None = None,
     else:
         cmd += ["--allowedTools", allowed_tools if allowed_tools is not None else ""]
 
+    # Credential precedence, most isolated first.
+    #
+    # The interactive login writes ~/.claude/.credentials.json, and Claude Code
+    # ROTATES that OAuth token on refresh. When another process shares the same
+    # home — an IDE/coding-agent session under the same user is the usual case —
+    # whichever refreshes first revokes the other's token. The symptom is a call
+    # that works once and then 401s "OAuth access token has been revoked".
+    #
+    # A token from `claude setup-token` is long-lived and passed by env, so it
+    # never takes part in that rotation. Prefer it; ANTHROPIC_API_KEY is the
+    # fully independent (API-priced) fallback.
     env_extra = {}
+    oauth = cfg.secret("CLAUDE_CODE_OAUTH_TOKEN")
     key = cfg.secret("ANTHROPIC_API_KEY")
-    if key:
+    if oauth:
+        env_extra["CLAUDE_CODE_OAUTH_TOKEN"] = oauth
+    elif key:
         env_extra["ANTHROPIC_API_KEY"] = key
 
     import os
