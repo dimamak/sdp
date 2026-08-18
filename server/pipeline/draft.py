@@ -255,10 +255,21 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
                 f"{max(0, 3 - len(always_tags))} more, only if truly relevant.\n")
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
+    # Rarely, the model appends a trailing thinking-only turn after already
+    # answering, and `claude -p --output-format json` reports that turn's (empty)
+    # text as `result` — the good answer earlier in the same response is lost to
+    # us. That's non-deterministic, so a single retry on a fresh session usually
+    # gets a clean answer rather than losing the whole day's draft to it.
     session_id = str(uuid.uuid4())
     result = run_claude(cfg, prompt, timeout=1800, session_id=session_id)
+    try:
+        data = extract_json(result)
+    except ValueError as e:
+        log.warning("write_drafts: %s — retrying once on a fresh session", e)
+        session_id = str(uuid.uuid4())
+        result = run_claude(cfg, prompt, timeout=1800, session_id=session_id)
+        data = extract_json(result)
     store.set_day_session(day, session_id)
-    data = extract_json(result)
 
     rejected = data.get("rejected") or []
     ids = []
