@@ -89,13 +89,11 @@ def main(argv=None) -> int:
     day = args.day or target_day(cfg)
     since = datetime.fromisoformat(window_start_iso(cfg))
 
-    # Runs are scheduled repeatedly through the morning so a late laptop still
-    # gets included; once a day has drafts, the rest of those attempts are no-ops.
-    if store.has_drafts_for_day(day) and not args.force and not args.dry_run:
-        log.info("%s already has drafts — nothing to do", day)
-        return 0
+    already_drafted = (store.has_drafts_for_day(day)
+                       and not args.force and not args.dry_run)
 
-    log.info("nightly run for %s (window since %s)", day, since)
+    log.info("nightly run for %s (window since %s)%s", day, since,
+             " [already drafted: harvesting only]" if already_drafted else "")
     results = collect_all(cfg, store, since)
     for name, n in results.items():
         log.info("harvest %s: %s new items", name, n)
@@ -106,6 +104,14 @@ def main(argv=None) -> int:
             log.info("transcribed %d audio file(s)", n)
     except Exception:
         log.exception("transcription failed — continuing without it")
+
+    # Only DRAFTING is once-per-day. Harvesting and transcription run every time:
+    # returning before them stranded whatever the laptop pushed after the day was
+    # drafted, leaving files in the spool until some later run happened to pass
+    # this point.
+    if already_drafted:
+        log.info("%s already has drafts — harvested only, no new drafts", day)
+        return 0
 
     # Drafting once, on partial data, is worse than drafting later on all of it:
     # the laptop carries the coding sessions, screenshots and office audio. If it
