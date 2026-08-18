@@ -230,6 +230,9 @@ def step_base(data: dict) -> None:
     pl = data.setdefault("pipeline", {})
     pl["timezone"] = ask("timezone", pl.get("timezone", "UTC"))
     pl["cron_utc"] = ask("nightly cron (UTC, crontab syntax)", pl.get("cron_utc", "30 0 * * *"))
+    tags = ask("hashtags to always include, comma-separated, no '#' (blank = none)",
+              ",".join(pl.get("always_hashtags", [])))
+    pl["always_hashtags"] = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
     dirs = [data["store_dir"], f"{data['ingest_dir']}/laptop", data["logs_dir"]]
     for d in dirs:
         Path(d).mkdir(parents=True, exist_ok=True)

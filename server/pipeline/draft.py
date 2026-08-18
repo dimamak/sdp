@@ -21,6 +21,11 @@ def _prompt_file(cfg, key: str, default_name: str) -> Path:
     return override if override and override.exists() else PROMPTS_DIR / default_name
 
 
+def _always_hashtags(cfg) -> list[str]:
+    return [t.strip().lstrip("#") for t in (cfg.get("pipeline.always_hashtags", []) or [])
+           if t and t.strip()]
+
+
 FOLLOW_UP_PROMPT = """The user is reviewing the LinkedIn draft you wrote for {day}.
 Their message:
 \"\"\"
@@ -158,7 +163,7 @@ Rules:
   fact and the stake, not the walkthrough.
 - Hard limit: {limit} characters, including any hashtags. Aim well under it — a post
   that just barely fits is fragile to X's own link/emoji weighting.
-- 0-2 hashtags, only if truly relevant.
+{hashtag_rule}
 - Every hard rule from the style guide earlier in this conversation still applies:
   no stack names, no fabrication, anonymize people, not salesy.
 
@@ -194,7 +199,16 @@ def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
     extra = ""
     if feedback:
         extra = X_REWRITE_REVISION.format(prev_text=prev_text or "(not recorded)", feedback=feedback)
-    prompt = X_REWRITE_PROMPT.format(day=day, post_text=post_text, extra=extra, limit=limit)
+    always_tags = _always_hashtags(cfg)
+    if always_tags:
+        tag_str = " ".join(f"#{t}" for t in always_tags)
+        hashtag_rule = (f"- Always include these exact hashtags, verbatim: {tag_str}. On top of "
+                        f"those, add 0-2 more hashtags genuinely relevant to X's audience for "
+                        f"THIS post — don't just repeat whatever tags the LinkedIn version used.")
+    else:
+        hashtag_rule = "- 0-2 hashtags, only if truly relevant to X's audience for this post."
+    prompt = X_REWRITE_PROMPT.format(day=day, post_text=post_text, extra=extra, limit=limit,
+                                     hashtag_rule=hashtag_rule)
 
     def _ask(p: str) -> str:
         if session_id:
@@ -231,6 +245,12 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
     task = _prompt_file(cfg, "draft_prompt", "draft-prompt.md").read_text(encoding="utf-8")
     task = (task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
                 .replace("{MAX_DRAFTS}", str(cfg.get("pipeline.max_drafts", 4))))
+    always_tags = _always_hashtags(cfg)
+    if always_tags:
+        tag_str = " ".join(f"#{t}" for t in always_tags)
+        task += (f"\n\nAlways include these exact hashtags, verbatim, in every post: {tag_str}. "
+                f"They count toward the style guide's 0-3 hashtag cap — add at most "
+                f"{max(0, 3 - len(always_tags))} more, only if truly relevant.\n")
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
     session_id = str(uuid.uuid4())

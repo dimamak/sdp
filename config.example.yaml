@@ -28,6 +28,12 @@ pipeline:
   model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
   claude_bin: claude                  # path to the claude CLI
   language_out: English               # language of the LinkedIn post
+  always_hashtags: []                 # e.g. ["buildinpublic", "AICoding"] — no leading '#'.
+                                      # Included verbatim in every LinkedIn post and every X
+                                      # rewrite; they count toward the style guide's 0-3 tag
+                                      # cap on LinkedIn. On X, the drafting agent is asked to
+                                      # add a couple more relevant tags on top of these.
+                                      # Set interactively with: python -m setup.wizard --source base
   # optional overrides for the drafting prompts — put your personal versions
   # outside the repo (they survive deploys and stay out of git):
   # style_guide: /opt/dailypost/data/style-guide.md
