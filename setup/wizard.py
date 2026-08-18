@@ -590,6 +590,56 @@ def step_linkedin(data: dict) -> None:
         print("  Later: python -m setup.wizard --source linkedin  (or python -m server.bot.linkedin_auth)")
 
 
+def step_x(data: dict) -> None:
+    """Post the same day's story to X too, once the LinkedIn post has actually
+    published. Optional, like images — skip it here and re-run later."""
+    print("\n== X (Twitter) ==")
+    print("  Once a LinkedIn post publishes, a separate short X-native rewrite is")
+    print("  written and sent for its own approval — nothing here changes what")
+    print("  already went to LinkedIn, even if the X step fails or is skipped.")
+    x_keys = ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET")
+    if all(env_get(k) for k in x_keys):
+        ok("using existing X credentials")
+    else:
+        print("  Create an app at https://developer.x.com (a Project + App).")
+        print("  App settings -> User authentication set up -> App permissions:")
+        print("  'Read and write'. Then Keys and tokens -> generate BOTH the API")
+        print("  Key/Secret and the Access Token/Secret.")
+        print("  Generate the access token AFTER setting Read-and-write — one")
+        print("  generated before that stays read-only and every post 403s.")
+        key = ask("X_API_KEY (empty = skip for now)", env_get("X_API_KEY") or "")
+        if not key:
+            data.setdefault("x", {})["enabled"] = False
+            warn("skipped — re-run later with: python -m setup.wizard --source x")
+            return
+        env_set("X_API_KEY", key)
+        env_set("X_API_SECRET", ask("X_API_SECRET", env_get("X_API_SECRET") or ""))
+        env_set("X_ACCESS_TOKEN", ask("X_ACCESS_TOKEN", env_get("X_ACCESS_TOKEN") or ""))
+        env_set("X_ACCESS_TOKEN_SECRET",
+               ask("X_ACCESS_TOKEN_SECRET", env_get("X_ACCESS_TOKEN_SECRET") or ""))
+
+    x = data.setdefault("x", {})
+    x["enabled"] = True
+    x.setdefault("max_chars", 280)
+    x.setdefault("max_rewrites", 5)
+    x.setdefault("pending_hours", 12)
+
+    if yes("verify the keys now via GET /2/users/me? (reads only, posts nothing)"):
+        save_data(data)
+        from server.config import Config
+        from server.bot.x_client import XClient
+        try:
+            import requests
+            client = XClient(Config.load(str(CONFIG)))
+            r = requests.get("https://api.twitter.com/2/users/me", auth=client._auth(), timeout=30)
+            r.raise_for_status()
+            ok(f"authenticated as @{r.json()['data']['username']}")
+        except Exception as e:
+            bad(f"check failed: {e} — retry with: python -m setup.wizard --source x")
+    else:
+        print("  Later: python -m server.bot.x_client --check")
+
+
 def step_image(data: dict) -> None:
     """Post illustrations via the Gemini API. Only needs an API key."""
     print("\n== Post images ==")
@@ -906,6 +956,20 @@ def doctor() -> int:
         return f"rest/images ok (version {cfg.get('linkedin.api_version', '202506')})"
     check("linkedin rest", _li_rest)
 
+    def _x():
+        if not cfg.get("x.enabled", False):
+            return "disabled"
+        from server.bot.x_client import XClient, _fail
+        client = XClient(cfg)
+        if not client.configured():
+            raise RuntimeError("X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET not set")
+        import requests
+        r = requests.get("https://api.twitter.com/2/users/me", auth=client._auth(), timeout=30)
+        if r.status_code >= 300:
+            _fail(r, "users/me")
+        return f"authenticated as @{r.json()['data']['username']}"
+    check("x", _x)
+
     def _gemini():
         if not cfg.get("image.enabled", True):
             return "disabled"
@@ -976,7 +1040,7 @@ def doctor() -> int:
 STEPS = {
     "base": step_base, "claude": step_claude, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
-    "pair": step_pair, "linkedin": step_linkedin, "image": step_image,
+    "pair": step_pair, "linkedin": step_linkedin, "x": step_x, "image": step_image,
     "laptop": step_laptop, "cron": step_cron, "systemd": step_systemd,
 }
 
@@ -1038,6 +1102,12 @@ def _done_linkedin(data):
         return "token present"
 
 
+def _done_x(data):
+    x_keys = ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET")
+    if data.get("x", {}).get("enabled") and all(env_get(k) for k in x_keys):
+        return "configured"
+
+
 def _done_image(data):
     if env_get("GEMINI_API_KEY") and data.get("image", {}).get("enabled"):
         return f"images on ({data['image'].get('model', 'gemini-3-pro-image')})"
@@ -1062,7 +1132,7 @@ def _done_laptop(data):
 DONE_PROBES = {
     "base": _done_base, "claude": _done_claude, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
-    "pair": _done_pair, "linkedin": _done_linkedin, "image": _done_image,
+    "pair": _done_pair, "linkedin": _done_linkedin, "x": _done_x, "image": _done_image,
     "laptop": _done_laptop, "cron": _done_cron, "systemd": _done_systemd,
 }
 

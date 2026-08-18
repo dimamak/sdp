@@ -40,3 +40,18 @@ git-ignored `PLAN.local.md` / `config.yaml`).
 - Edit-in-web-UI link instead of Telegram inline edit
 - Harvested screenshots as post media (the original Phase 3 idea) — now a small
   addition on top of the image pipeline rather than a new integration
+
+## Phase 5 — also post to X  ✅ implemented
+- After a LinkedIn draft actually publishes, the same day's Claude session
+  writes a separate X-native rewrite (not a truncation — LinkedIn targets
+  600–1,200 characters, X's default cap is 280) and delivers it with its own
+  Post to X / Rewrite / Replace text / Skip X buttons; nothing reaches X on a
+  single tap, and nothing in this step can affect the LinkedIn post already made
+- Auth is OAuth 1.0a with four static keys generated once in the X developer
+  portal (`server/bot/x_client.py`) — no token file or refresh loop, unlike
+  LinkedIn's OAuth2 flow
+- Reuses the same illustration posted to LinkedIn, uploaded separately to X's
+  media endpoint; a failed media upload still posts the text rather than
+  losing the post
+- `x.enabled: false` by default; `/x` in Telegram recovers the step if the bot
+  restarts between a LinkedIn publish and the X candidate being written

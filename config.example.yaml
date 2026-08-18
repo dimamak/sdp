@@ -125,6 +125,27 @@ linkedin:
   # dry_run: true                      # log the request body, publish nothing
 
 # ---------------------------------------------------------------------------
+# Also post to X (Twitter), once the LinkedIn post has actually gone out.
+# Once a LinkedIn post publishes, Claude (same day session) writes a SEPARATE,
+# shorter X-native rewrite — not a truncation of the LinkedIn text — and it gets
+# its own Post to X / Rewrite / Replace text / Skip X buttons in Telegram.
+# Nothing reaches X until that second tap, and nothing here can affect a LinkedIn
+# post that already succeeded. Keys go in .env: X_API_KEY, X_API_SECRET,
+# X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET (OAuth 1.0a — no token file, doesn't
+# expire on its own). Set up with: python -m setup.wizard --source x
+# The X API Free tier caps writes at ~500 posts/month per app — plenty for one
+# post a day, but relevant if you also run test posts against the same app.
+# ---------------------------------------------------------------------------
+x:
+  enabled: false
+  max_chars: 280                       # X's default cap; raise only if the posting
+                                       # account has X Premium (note_tweet, up to
+                                       # ~25,000 chars) — this app does not use that field
+  max_rewrites: 5                      # "Rewrite" cap per draft, like image.max_regenerations
+  pending_hours: 12                    # how long a candidate stays steerable by free text
+  # dry_run: true                      # log the request body, publish nothing
+
+# ---------------------------------------------------------------------------
 # Post illustrations (Gemini API — an API key, no GCP project needed).
 # Approve becomes two steps: it draws an image for the post and sends it back for
 # confirmation; nothing reaches LinkedIn until you tap Post with image (or Post

@@ -143,6 +143,84 @@ def image_brief(cfg, day: str, session_id: str | None, post_text: str,
     return image_prompt, alt
 
 
+X_REWRITE_PROMPT = """You wrote a LinkedIn post for {day} and it has already been
+published. Now write the X (Twitter) version of the SAME fact — a genuine rewrite
+for that platform's voice and length, not a truncation of the LinkedIn text.
+
+The published LinkedIn post:
+\"\"\"
+{post_text}
+\"\"\"
+{extra}
+Rules:
+- Keep the same fact and hook — don't introduce anything the LinkedIn post didn't say.
+- Drop the "why it matters" elaboration and any mechanism detail; X readers want the
+  fact and the stake, not the walkthrough.
+- Hard limit: {limit} characters, including any hashtags. Aim well under it — a post
+  that just barely fits is fragile to X's own link/emoji weighting.
+- 0-2 hashtags, only if truly relevant.
+- Every hard rule from the style guide earlier in this conversation still applies:
+  no stack names, no fabrication, anonymize people, not salesy.
+
+Return ONLY a JSON object, no other text:
+{{"post_text": "the full X post, ready to publish"}}
+"""
+
+X_REWRITE_REVISION = """
+Your previous attempt was:
+\"\"\"
+{prev_text}
+\"\"\"
+Problem with it: {feedback}
+Revise it to fix that. Keep everything else that worked.
+"""
+
+
+def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
+             feedback: str | None = None, prev_text: str | None = None,
+             limit: int = 280) -> str:
+    """Ask for an X-native rewrite of an already-published LinkedIn post.
+
+    Resumes the day's session when there is one, so the rewrite comes from the
+    day's story rather than a re-reading of the LinkedIn post's wording, and the
+    style guide's hard rules are still in context. Falls back to a one-shot call
+    when the session is gone. Takes plain values, no Store: safe to call from
+    asyncio.to_thread.
+
+    Retries once, internally, if the model's own answer runs over `limit` — the
+    API is the final authority on X's exact (weighted) character count, but there
+    is no reason to show the user an answer already known to be too long.
+    """
+    extra = ""
+    if feedback:
+        extra = X_REWRITE_REVISION.format(prev_text=prev_text or "(not recorded)", feedback=feedback)
+    prompt = X_REWRITE_PROMPT.format(day=day, post_text=post_text, extra=extra, limit=limit)
+
+    def _ask(p: str) -> str:
+        if session_id:
+            try:
+                result = run_claude(cfg, p, session_id=session_id, resume=True, timeout=300)
+            except Exception as e:
+                log.warning("x rewrite: session %s unusable (%s) — falling back", session_id, e)
+                result = run_claude(cfg, p, timeout=300)
+        else:
+            result = run_claude(cfg, p, timeout=300)
+        data = extract_json(result)
+        text = (data.get("post_text") or "").strip()
+        if not text:
+            raise ValueError(f"no post_text in response: {result[:300]}")
+        return text
+
+    text = _ask(prompt)
+    if len(text) > limit:
+        over = len(text) - limit
+        retry_prompt = prompt + X_REWRITE_REVISION.format(
+            prev_text=text, feedback=f"that was {len(text)} characters, {over} over the "
+                                     f"{limit} limit. Cut content, don't just trim words off the end.")
+        text = _ask(retry_prompt)
+    return text
+
+
 def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dict]]:
     """Draft one post per interesting fact found in the day.
 

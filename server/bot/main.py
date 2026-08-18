@@ -26,11 +26,12 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
 from ..config import Config
-from ..pipeline.draft import converse, image_brief
+from ..pipeline.draft import converse, image_brief, x_rewrite
 from ..pipeline.image_gen import ImageGenError, generate_image
 from ..store import Store
 from ..util import get_logger
 from .linkedin_client import LinkedInClient, feed_url
+from .x_client import XClient, tweet_url as x_tweet_url
 
 log = get_logger("bot")
 
@@ -65,12 +66,36 @@ def image_failed_keyboard(draft_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+def x_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🐦 Post to X", callback_data=f"xpost:{draft_id}"),
+         InlineKeyboardButton("🔁 Rewrite", callback_data=f"xredo:{draft_id}")],
+        [InlineKeyboardButton("✏️ Replace text", callback_data=f"xedit:{draft_id}"),
+         InlineKeyboardButton("⏭ Skip X", callback_data=f"xskip:{draft_id}")],
+    ])
+
+
+def x_failed_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Retry", callback_data=f"xstart:{draft_id}"),
+         InlineKeyboardButton("⏭ Skip X", callback_data=f"xskip:{draft_id}")],
+    ])
+
+
+def x_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    """Shown when the X step was queued behind a still-running message."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🐦 Write X version", callback_data=f"xstart:{draft_id}")],
+    ])
+
+
 class Bot:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.store = Store(cfg.path_of("store_dir"))
         self.chat_id = int(cfg.secret("TG_ALLOWED_CHAT_ID", "0"))
         self.linkedin = LinkedInClient(cfg)
+        self.x = XClient(cfg)
         self.busy = asyncio.Lock()
         self.active_draft_id: int | None = None  # last draft you interacted with
 
@@ -247,6 +272,108 @@ class Bot:
             link = feed_url(urn)
             await note.edit_text(f"✅ Posted{' with image' if img else ''}. {link}")
 
+        # lock released — the X rewrite is another slow Claude call and self.busy
+        # is not reentrant, so it starts from out here, never from inside the
+        # block above (same rule start_image documents for its own callers).
+        if self.cfg.get("x.enabled", False) and self.x.configured():
+            fresh = self.store.get_draft(draft_id)
+            if fresh is not None:
+                await self.start_x(context, fresh)
+
+    # ---- X (Twitter) ---------------------------------------------------------
+
+    async def start_x(self, context: ContextTypes.DEFAULT_TYPE, draft,
+                      feedback: str | None = None) -> None:
+        """After a successful LinkedIn publish: rewrite the post for X and show it
+        for its own approval.
+
+        Acquires self.busy exactly once and never calls converse_turn or publish()
+        (the lock is not reentrant). Rewrite/retry re-enter here from a handler,
+        after release — same contract as start_image.
+        """
+        draft_id = draft["id"]
+        if draft["status"] != "posted":
+            return  # nothing published yet for this draft to base an X post on
+        prev = self.store.latest_x(draft_id)
+        n = (prev["n"] + 1) if prev else 1
+        cap = int(self.cfg.get("x.max_rewrites", 5))
+        if n > cap:
+            await context.bot.send_message(
+                self.chat_id, f"{cap} takes on the X version already — post one, or Skip X.")
+            return
+        if self.busy.locked():
+            await context.bot.send_message(
+                self.chat_id, "🐦 X version queued — tap when the current message finishes.",
+                reply_markup=x_start_keyboard(draft_id))
+            return
+
+        session_id = self.store.session_for_day(draft["day"])
+        prev_text = prev["text"] if prev else None
+        post_text = draft["text"]
+        limit = int(self.cfg.get("x.max_chars", 280))
+
+        async with self.busy:
+            status = await context.bot.send_message(self.chat_id, "✍️ writing the X version…")
+            try:
+                text = await asyncio.to_thread(
+                    x_rewrite, self.cfg, draft["day"], session_id, post_text,
+                    feedback, prev_text, limit)
+            except Exception as e:
+                log.exception("x rewrite failed")
+                self.store.add_x(draft_id, n, feedback=feedback, status="failed", error=str(e))
+                await status.edit_text(f"⚠️ X rewrite failed: {e}"[:4000],
+                                       reply_markup=x_failed_keyboard(draft_id))
+                return
+
+            x_id = self.store.add_x(draft_id, n, text=text, feedback=feedback, status="ready")
+            self.active_draft_id = draft_id
+
+            # only the newest take keeps live buttons
+            if prev is not None:
+                self.store.update_x(prev["id"], status="discarded")
+                if prev["tg_message_id"]:
+                    try:
+                        await context.bot.edit_message_reply_markup(
+                            self.chat_id, int(prev["tg_message_id"]), reply_markup=None)
+                    except Exception:
+                        pass
+
+            await status.delete()
+            sent = await context.bot.send_message(
+                self.chat_id,
+                (f"{text}\n\n— X take {n} ({len(text)}/{limit} chars). Reply to steer it, "
+                 f"or use the buttons.")[:4000],
+                reply_markup=x_keyboard(draft_id))
+            self.store.update_x(x_id, status="pending_review", tg_message_id=str(sent.message_id))
+
+    async def publish_x(self, context: ContextTypes.DEFAULT_TYPE, draft, xrow) -> None:
+        """The only place that publishes to X. Reuses the LinkedIn image if one was
+        attached to this draft; a failed media upload still posts the text (see
+        XClient.post). Never touches the drafts table — a LinkedIn post that
+        already succeeded is unaffected by anything that happens here."""
+        draft_id = draft["id"]
+        if self.busy.locked():
+            await context.bot.send_message(self.chat_id, "Still working on the previous message…")
+            return
+        async with self.busy:
+            img = self.store.latest_image(draft_id, status="attached")
+            note = await context.bot.send_message(
+                self.chat_id, "📤 posting to X…" if img is None
+                else "📤 uploading the image and posting to X…")
+            try:
+                tweet_id, media_id = await asyncio.to_thread(
+                    self.x.post, xrow["text"],
+                    Path(img["path"]) if img else None,
+                    img["alt_text"] if img else None)
+            except Exception as e:
+                log.exception("x post failed")
+                await note.edit_text(f"⚠️ X post failed: {e}"[:4000],
+                                     reply_markup=x_keyboard(draft_id))
+                return
+            self.store.update_x(xrow["id"], status="posted", tweet_id=tweet_id)
+            link = x_tweet_url(tweet_id)
+            await note.edit_text(f"✅ Posted to X{' with image' if media_id else ''}. {link}")
+
     # ---- handlers ------------------------------------------------------------
 
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -326,17 +453,63 @@ class Bot:
             await q.edit_message_reply_markup(None)
             await context.bot.send_message(self.chat_id, "⏭ Skipped.")
 
+        elif action == "xpost":
+            xrow = self.store.latest_x(draft_id, status="pending_review")
+            if xrow is None:
+                await context.bot.send_message(self.chat_id, "No X candidate is waiting on that draft.")
+                return
+            await q.edit_message_reply_markup(None)
+            await self.publish_x(context, draft, xrow)
+
+        elif action == "xredo":
+            await q.edit_message_reply_markup(None)
+            await self.start_x(context, draft)
+
+        elif action == "xedit":
+            prev = self.store.editing_x(int(self.cfg.get("x.pending_hours", 12)))
+            if prev is not None and prev["draft_id"] != draft_id:
+                self.store.update_x(prev["id"], status="pending_review")
+            xrow = self.store.latest_x(draft_id)
+            if xrow is None:
+                await context.bot.send_message(self.chat_id, "No X candidate to edit yet.")
+                return
+            self.store.update_x(xrow["id"], status="editing")
+            await context.bot.send_message(
+                self.chat_id,
+                "✏️ Send the exact X replacement text as your next message "
+                "(it will be used verbatim, the model won't see it).")
+
+        elif action == "xskip":
+            xrow = self.store.latest_x(draft_id)
+            if xrow is not None:
+                self.store.update_x(xrow["id"], status="discarded")
+            await q.edit_message_reply_markup(None)
+            await context.bot.send_message(self.chat_id, "⏭ X skipped.")
+
+        elif action == "xstart":
+            await q.edit_message_reply_markup(None)
+            await self.start_x(context, draft)
+
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.allowed(update) or not update.message or not update.message.text:
             return
         text = update.message.text.strip()
 
-        # explicit verbatim-replace mode (set by the "Replace text" button)
+        # explicit verbatim-replace mode for the LinkedIn draft (set by "Replace text")
         draft = self.store.latest_editing_draft()
         if draft is not None:
             self.store.update_draft(draft["id"], text=text, status="pending")
             await update.message.reply_text(
                 f"Updated draft:\n\n{text}"[:4000], reply_markup=draft_keyboard(draft["id"]))
+            return
+
+        # explicit verbatim-replace mode for the X candidate (set by "Replace text")
+        xedit = self.store.editing_x(int(self.cfg.get("x.pending_hours", 12)))
+        if xedit is not None:
+            self.store.update_x(xedit["id"], text=text, source="manual", status="pending_review")
+            await update.message.reply_text(
+                f"Updated X take ({len(text)} chars):\n\n{text}"[:4000],
+                reply_markup=x_keyboard(xedit["draft_id"]))
             return
 
         # an image is on the table → free text steers the next take
@@ -345,6 +518,14 @@ class Bot:
             d = self.store.get_draft(img["draft_id"])
             if d is not None and d["status"] == "imaging":
                 await self.start_image(context, d, feedback=text)
+                return
+
+        # an X candidate is on the table → free text steers the next rewrite
+        xrow = self.store.pending_x(int(self.cfg.get("x.pending_hours", 12)))
+        if xrow is not None:
+            d = self.store.get_draft(xrow["draft_id"])
+            if d is not None and d["status"] == "posted":
+                await self.start_x(context, d, feedback=text)
                 return
 
         # everything else is a conversation turn in the day's session, about the
@@ -368,10 +549,28 @@ class Bot:
             "SELECT COUNT(*) c FROM items WHERE created_at >= datetime('now','-1 day')").fetchone()
         days = self.linkedin.days_until_expiry()
         sess = self.store.latest_day_session()
+        x_status = ("disabled" if not self.cfg.get("x.enabled", False)
+                   else "ready" if self.x.configured() else "enabled but keys missing")
         await update.message.reply_text(
             f"dailypost alive. Items last 24h: {row['c']}. "
             f"LinkedIn token: {'n/a' if days is None else f'{days}d left'}. "
+            f"X: {x_status}. "
             f"Session day: {sess['day'] if sess else 'none'}.")
+
+    async def on_x(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/x — recover the X step for a draft that published to LinkedIn but never
+        got an X candidate started (e.g. the bot restarted in between)."""
+        if not self.allowed(update):
+            return
+        if not (self.cfg.get("x.enabled", False) and self.x.configured()):
+            await update.message.reply_text("X posting is not enabled/configured.")
+            return
+        draft = self.store.draft_awaiting_x(int(self.cfg.get("x.pending_hours", 12)))
+        if draft is None:
+            await update.message.reply_text("Nothing waiting for an X version right now.")
+            return
+        self.active_draft_id = draft["id"]
+        await self.start_x(context, draft)
 
     async def on_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.allowed(update):
@@ -392,7 +591,11 @@ class Bot:
             "Approve doesn't publish. It draws an image for the post and shows it to you; "
             "nothing reaches LinkedIn until you tap Post with image (or Post text-only). "
             "While an image is on the table, plain messages steer the picture — "
-            "use /talk to go back to discussing the words.\n"
+            "use /talk to go back to discussing the words.\n\n"
+            "If X posting is enabled, once a post reaches LinkedIn I write a separate, "
+            "shorter X-native rewrite and send it with its own buttons — nothing reaches "
+            "X until you tap Post to X, and skipping or failing that never touches the "
+            "LinkedIn post already made. /x recovers that step if I ever miss it.\n"
             "/status shows health.")
 
 
@@ -445,6 +648,7 @@ def main() -> None:
     app.add_handler(CommandHandler("status", bot.on_status))
     app.add_handler(CommandHandler("help", bot.on_help))
     app.add_handler(CommandHandler("talk", bot.on_talk))
+    app.add_handler(CommandHandler("x", bot.on_x))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.on_message))
     log.info("bot polling started")
     app.run_polling(allowed_updates=["message", "callback_query"])

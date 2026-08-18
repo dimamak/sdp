@@ -9,6 +9,13 @@ shows it to you first — **nothing reaches LinkedIn until a second tap**. Publi
 goes through the official *Share on LinkedIn* API (`w_member_social`).
 Never auto-publishes.
 
+Once a LinkedIn post actually publishes, it can optionally also go to X
+(Twitter): the same day's Claude session writes a separate, shorter X-native
+rewrite (not a truncation — X's limit is 280 chars against LinkedIn's
+600–1,200), and that gets its own **Post to X / Rewrite / Replace text / Skip X**
+buttons. Nothing reaches X until that second tap either, and nothing in that
+step can affect the LinkedIn post already made. See [Also post to X](#also-post-to-x).
+
 Runs on any Linux server + optional laptop; nothing instance-specific is in the
 code — everything lives in `config.yaml` / `.env` (both git-ignored).
 
@@ -19,6 +26,7 @@ laptop ──(nightly tar-over-ssh)──▶ ingest/           screenshots, Clau
 server harvesters ───────────────▶ SQLite store      telegram, gmail, whatsapp, claude sessions
 nightly cron: digest ─▶ claude -p ─▶ draft ─▶ Telegram bot
                                              └▶ [Approve] ─▶ image ─▶ [Post] ─▶ LinkedIn
+                                                                          └▶ rewrite ─▶ [Post to X] ─▶ X
 ```
 
 - **Claude Code sessions** are read from `~/.claude/projects/**/*.jsonl` — locally,
@@ -55,6 +63,34 @@ tap does.
   `image.retention_days`.
 
 Set it up with `.venv/bin/python -m setup.wizard --source image`.
+
+## Also post to X
+
+Turned on with `x.enabled: true`. Once a draft actually publishes to LinkedIn —
+not before — the same day's Claude session writes a separate X-native rewrite of
+the same fact (the LinkedIn style guide targets 600–1,200 characters; X's default
+cap is 280, so this is a genuine rewrite, not a truncation). It arrives in
+Telegram with its own **Post to X · Rewrite · Replace text · Skip X** buttons,
+reusing the same illustration if one was posted with the LinkedIn version.
+Failing or skipping this step never touches the LinkedIn post already made.
+
+- Needs an X (Twitter) developer App with OAuth 1.0a keys in `.env`:
+  `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`. Unlike
+  LinkedIn's OAuth2 flow, these don't expire on their own — generated once at
+  [developer.x.com](https://developer.x.com), no token file, no refresh step.
+  **Generate the access token after** setting the App's permissions to "Read and
+  write", or it stays read-only and every post 403s.
+- The X API Free tier caps writes at roughly 500 posts/month per App — plenty
+  for one post a day.
+- `x.max_chars` (default 280) is a soft guard the rewrite targets; X's own API
+  response is the real authority on length. Raise it only if the posting
+  account has X Premium/Premium+.
+- If the bot restarts between a LinkedIn publish and the X step starting, `/x`
+  in Telegram recovers it.
+
+Set it up with `.venv/bin/python -m setup.wizard --source x`. Probes that don't
+touch your timeline: `python -m server.bot.x_client --dry-run "text"` and
+`--check`.
 
 ## Setup
 
@@ -117,6 +153,8 @@ does this for you). Key ideas:
 - `pipeline:` timezone, cron, size caps, model.
 - `image:` illustration model, aspect ratio, size, regeneration cap — or
   `enabled: false` to skip the image step entirely.
+- `x:` char limit, rewrite cap, how long a candidate stays steerable — `enabled:
+  false` (the default) skips the X step entirely; see [Also post to X](#also-post-to-x).
 - Style/voice of the drafts: edit `server/pipeline/prompts/style-guide.md`; the
   look of the images: `image.style_suffix` in `config.yaml`.
 

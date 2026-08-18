@@ -63,6 +63,25 @@ CREATE TABLE IF NOT EXISTS draft_images (
 );
 CREATE INDEX IF NOT EXISTS idx_draft_images_draft ON draft_images(draft_id);
 
+-- One row per X (Twitter) rewrite attempt of an already-posted LinkedIn draft;
+-- same one-row-per-take shape as draft_images. Never written to until the
+-- LinkedIn post for the same draft has actually gone out.
+CREATE TABLE IF NOT EXISTS draft_x (
+    id INTEGER PRIMARY KEY,
+    draft_id INTEGER NOT NULL,
+    n INTEGER NOT NULL DEFAULT 1,           -- take number within the draft, 1-based
+    text TEXT,                              -- the X-native rewrite
+    feedback TEXT,                          -- your steer that produced this take
+    source TEXT NOT NULL DEFAULT 'claude',  -- claude|manual (manual = verbatim "Replace text")
+    -- ready|pending_review|editing|posted|discarded|failed
+    status TEXT NOT NULL DEFAULT 'ready',
+    tweet_id TEXT,
+    tg_message_id TEXT,
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_draft_x_draft ON draft_x(draft_id);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     source TEXT PRIMARY KEY,
     cursor TEXT
@@ -111,6 +130,7 @@ class Store:
         self.db.executescript(SCHEMA)
         # nothing to backfill today; the hook exists so the next column is a one-liner
         _ensure_columns(self.db, "drafts", {})
+        _ensure_columns(self.db, "draft_x", {})
         self.db.commit()
 
     # ---- items -------------------------------------------------------------
@@ -200,8 +220,9 @@ class Store:
     def draft_by_tg_message(self, tg_message_id: str | int) -> sqlite3.Row | None:
         """Resolve which draft a Telegram reply refers to.
 
-        Also matches the photo/confirm messages of the image flow, so replying to
-        either the original draft or the image you're looking at works.
+        Also matches the photo/confirm messages of the image flow and the X
+        candidate messages, so replying to any of those, or the original draft,
+        works.
         """
         mid = str(tg_message_id)
         return self.db.execute(
@@ -209,8 +230,11 @@ class Store:
             " UNION ALL"
             " SELECT d.* FROM drafts d JOIN draft_images i ON i.draft_id=d.id"
             "  WHERE i.tg_message_id=? OR i.tg_photo_message_id=?"
+            " UNION ALL"
+            " SELECT d.* FROM drafts d JOIN draft_x x ON x.draft_id=d.id"
+            "  WHERE x.tg_message_id=?"
             " LIMIT 1",
-            (mid, mid, mid),
+            (mid, mid, mid, mid),
         ).fetchone()
 
     def has_drafts_for_day(self, day: str) -> bool:
@@ -295,3 +319,63 @@ class Store:
             " AND status != 'attached' AND created_at < ?",
             (cutoff_iso.replace("T", " ").split("+")[0],),
         ).fetchall()
+
+    # ---- draft X (Twitter) posts -----------------------------------------------
+    def add_x(self, draft_id: int, n: int, *, text: str | None = None,
+             feedback: str | None = None, source: str = "claude",
+             status: str = "ready", error: str | None = None) -> int:
+        cur = self.db.execute(
+            "INSERT INTO draft_x(draft_id, n, text, feedback, source, status, error)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (draft_id, n, text, feedback, source, status, error),
+        )
+        self.db.commit()
+        return cur.lastrowid
+
+    def update_x(self, x_id: int, **fields) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE draft_x SET {cols} WHERE id=?", (*fields.values(), x_id))
+        self.db.commit()
+
+    def latest_x(self, draft_id: int, status: str | None = None) -> sqlite3.Row | None:
+        sql = "SELECT * FROM draft_x WHERE draft_id=?"
+        args: tuple = (draft_id,)
+        if status:
+            sql += " AND status=?"
+            args += (status,)
+        return self.db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+
+    def x_for_draft(self, draft_id: int) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM draft_x WHERE draft_id=? ORDER BY n", (draft_id,)).fetchall()
+
+    def pending_x(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """The X candidate currently awaiting your yes/no, if it is still recent.
+
+        Age-bounded from the start — see pending_image()'s comment on why an
+        unbounded version would swallow every later free-text message forever.
+        """
+        return self.db.execute(
+            "SELECT * FROM draft_x WHERE status='pending_review'"
+            " AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def editing_x(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """The X candidate whose text you're about to replace verbatim, if recent."""
+        return self.db.execute(
+            "SELECT * FROM draft_x WHERE status='editing'"
+            " AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def draft_awaiting_x(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """A LinkedIn draft that was posted but never got an X candidate started —
+        e.g. the bot restarted between publish() and start_x(). Used by /x."""
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE status='posted'"
+            " AND updated_at >= datetime('now', ?)"
+            " AND id NOT IN (SELECT draft_id FROM draft_x)"
+            " ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
