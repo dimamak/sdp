@@ -171,7 +171,10 @@ class Bot:
         prev = self.store.latest_image(draft_id)
         n = (prev["n"] + 1) if prev else 1
         cap = int(self.cfg.get("image.max_regenerations", 6))
-        if n > cap:
+        # a render that failed (safety refusal, quota, timeout...) never reached you
+        # for review, so it shouldn't burn your regeneration budget
+        used = sum(1 for i in self.store.images_for_draft(draft_id) if i["status"] != "failed")
+        if cap > 0 and used >= cap:
             await context.bot.send_message(
                 self.chat_id,
                 f"{cap} takes on this one already — post it, or Cancel and change the text.")
@@ -297,7 +300,8 @@ class Bot:
         prev = self.store.latest_x(draft_id)
         n = (prev["n"] + 1) if prev else 1
         cap = int(self.cfg.get("x.max_rewrites", 5))
-        if n > cap:
+        used = sum(1 for x in self.store.x_for_draft(draft_id) if x["status"] != "failed")
+        if cap > 0 and used >= cap:
             await context.bot.send_message(
                 self.chat_id, f"{cap} takes on the X version already — post one, or Skip X.")
             return

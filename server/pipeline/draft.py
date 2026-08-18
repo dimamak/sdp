@@ -79,13 +79,15 @@ The post:
 {post_text}
 \"\"\"
 {extra}
-You know the story behind this post, not just its words — brief the *story*, one
-single visual idea. Rules for the prompt you write:
+You know the story behind this post, not just its words — brief a concrete,
+literal scene: the real subject, setting and action behind the post, not an
+abstract metaphor or symbolic stand-in. Rules for the prompt you write:
 - Describe a scene or composition, concretely. No slide layouts, no infographics.
-- No text, letters, numbers, logos or watermarks anywhere in the image; image
-  models render them badly and LinkedIn readers notice.
-- No recognisable real people, no company branding.
-- No literal screenshots of code, dashboards or chat windows.
+- No text, letters, numbers or watermarks anywhere in the image; image models
+  render them badly and LinkedIn readers notice. Exception: if the post names a
+  specific company, show that company's real logo or brand mark somewhere in the
+  scene (screen, sign, product, packaging...) — render it as accurately as you can.
+- No recognisable real people.
 - The composition must fill the whole frame, edge to edge. Never ask for a
   cinematic, widescreen, anamorphic or film-still look: the model answers those
   by painting black letterbox bars into the canvas, which show up as dead bands

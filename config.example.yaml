@@ -147,7 +147,8 @@ x:
   max_chars: 280                       # X's default cap; raise only if the posting
                                        # account has X Premium (note_tweet, up to
                                        # ~25,000 chars) — this app does not use that field
-  max_rewrites: 5                      # "Rewrite" cap per draft, like image.max_regenerations
+  max_rewrites: 5                      # "Rewrite" cap per draft, like image.max_regenerations.
+                                       # 0 = no cap. Failed attempts don't count against it.
   pending_hours: 12                    # how long a candidate stays steerable by free text
   # dry_run: true                      # log the request body, publish nothing
 
@@ -167,7 +168,10 @@ image:
   aspect_ratio: "1:1"                  # 1:1 2:3 3:2 3:4 4:3 4:5 5:4 9:16 16:9 21:9
   image_size: "2K"                     # 1K | 2K | 4K  (2K ≈ 2 MB JPEG)
   timeout: 180                         # seconds for one render, retries included
-  max_regenerations: 6                 # takes per draft; each one costs a render
+  max_regenerations: 6                 # takes per draft; each one costs a render.
+                                       # 0 = no cap. A take that fails to render
+                                       # (safety refusal, quota, timeout) never
+                                       # reaches you for review, so it doesn't count.
   pending_hours: 12                    # after this, plain messages stop being read as
                                        # image feedback (bot restarts, forgotten drafts)
   retention_days: 30                   # prune UNPOSTED takes; images actually published
@@ -182,8 +186,9 @@ image:
   # The full-frame clause is load-bearing: asked for a cinematic look, the model
   # paints black letterbox bars into the canvas and they show as dead bands.
   style_suffix: >
-    Editorial illustration, restrained palette, generous negative space,
-    no text, no logos, no recognisable real people.
+    Grounded, literal illustration of the real scene — not an abstract metaphor
+    or symbolic composition. Naturalistic color and detail. No text, no
+    recognisable real people; a named company's real logo is fine.
     Fills the entire frame edge to edge — no letterboxing, no black bars, no borders.
 
 # Laptop side (read by wizard_laptop.ps1 to generate laptop/push.conf; the bash
