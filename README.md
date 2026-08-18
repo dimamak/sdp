@@ -76,10 +76,17 @@ Failing or skipping this step never touches the LinkedIn post already made.
 
 - Needs an X (Twitter) developer App with OAuth 1.0a keys in `.env`:
   `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`. Unlike
-  LinkedIn's OAuth2 flow, these don't expire on their own — generated once at
-  [developer.x.com](https://developer.x.com), no token file, no refresh step.
-  **Generate the access token after** setting the App's permissions to "Read and
-  write", or it stays read-only and every post 403s.
+  LinkedIn's OAuth2 flow, these don't expire on their own — no token file, no
+  refresh step. **Generate the access token after** setting the App's
+  permissions to "Read and write", or it stays read-only and every post 403s.
+- One App can post for several people the same way one LinkedIn App already
+  can (see [Several people on one server](#several-people-on-one-server)): the
+  owner generates `X_ACCESS_TOKEN`/`X_ACCESS_TOKEN_SECRET` for themselves
+  directly in [developer.x.com](https://developer.x.com); everyone else shares
+  the owner's `X_API_KEY`/`X_API_SECRET` and gets their own access token via
+  `python -m server.bot.x_auth` — a PIN-based OAuth flow that opens a URL,
+  signs in as their own account, and writes the pair into their own instance's
+  `.env`.
 - The X API Free tier caps writes at roughly 500 posts/month per App — plenty
   for one post a day.
 - `x.max_chars` (default 280) is a soft guard the rewrite targets; X's own API

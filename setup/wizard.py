@@ -604,22 +604,47 @@ def step_x(data: dict) -> None:
     if all(env_get(k) for k in x_keys):
         ok("using existing X credentials")
     else:
-        print("  Create an app at https://developer.x.com (a Project + App).")
-        print("  App settings -> User authentication set up -> App permissions:")
-        print("  'Read and write'. Then Keys and tokens -> generate BOTH the API")
-        print("  Key/Secret and the Access Token/Secret.")
-        print("  Generate the access token AFTER setting Read-and-write — one")
-        print("  generated before that stays read-only and every post 403s.")
-        key = ask("X_API_KEY (empty = skip for now)", env_get("X_API_KEY") or "")
-        if not key:
-            data.setdefault("x", {})["enabled"] = False
-            warn("skipped — re-run later with: python -m setup.wizard --source x")
-            return
-        env_set("X_API_KEY", key)
-        env_set("X_API_SECRET", ask("X_API_SECRET", env_get("X_API_SECRET") or ""))
-        env_set("X_ACCESS_TOKEN", ask("X_ACCESS_TOKEN", env_get("X_ACCESS_TOKEN") or ""))
-        env_set("X_ACCESS_TOKEN_SECRET",
-               ask("X_ACCESS_TOKEN_SECRET", env_get("X_ACCESS_TOKEN_SECRET") or ""))
+        if env_get("X_API_KEY") and env_get("X_API_SECRET"):
+            ok("using existing X_API_KEY / X_API_SECRET (shared App, like LinkedIn) — "
+               "just need this account's own access token below")
+        else:
+            print("  Create an app at https://developer.x.com (a Project + App), or if")
+            print("  someone else here already has one, ask them for its API Key/Secret —")
+            print("  one App's keys can be shared the same way this project already")
+            print("  shares one LinkedIn App across accounts.")
+            print("  App settings -> User authentication set up -> App permissions:")
+            print("  'Read and write'.")
+            key = ask("X_API_KEY (empty = skip for now)", env_get("X_API_KEY") or "")
+            if not key:
+                data.setdefault("x", {})["enabled"] = False
+                warn("skipped — re-run later with: python -m setup.wizard --source x")
+                return
+            env_set("X_API_KEY", key)
+            env_set("X_API_SECRET", ask("X_API_SECRET", env_get("X_API_SECRET") or ""))
+
+        if not (env_get("X_ACCESS_TOKEN") and env_get("X_ACCESS_TOKEN_SECRET")):
+            print("  Need an access token for THIS account. Two ways to get one:")
+            print("  1) PIN-based OAuth here (works for anyone, including a second")
+            print("     person sharing someone else's App) — opens a URL, you sign in")
+            print("     as this account and paste back a PIN.")
+            print("  2) Paste one already generated in the developer portal — only")
+            print("     works for the App's own owner, and ONLY after setting")
+            print("     permissions to Read-and-write (an access token generated")
+            print("     before that stays read-only forever and every post 403s).")
+            if yes("run the PIN-based OAuth flow now? (recommended)"):
+                save_data(data)  # x_auth reads X_API_KEY/SECRET from config.yaml's sibling .env
+                from server.bot.x_auth import main as x_auth_main
+                try:
+                    if x_auth_main(["--config", str(CONFIG)]) == 0:
+                        ok("X account authorized")
+                    else:
+                        warn("OAuth did not complete — retry with: python -m server.bot.x_auth")
+                except Exception as e:
+                    bad(f"OAuth failed: {e} — retry with: python -m server.bot.x_auth")
+            else:
+                env_set("X_ACCESS_TOKEN", ask("X_ACCESS_TOKEN", env_get("X_ACCESS_TOKEN") or ""))
+                env_set("X_ACCESS_TOKEN_SECRET",
+                       ask("X_ACCESS_TOKEN_SECRET", env_get("X_ACCESS_TOKEN_SECRET") or ""))
 
     x = data.setdefault("x", {})
     x["enabled"] = True

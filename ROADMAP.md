@@ -50,6 +50,11 @@ git-ignored `PLAN.local.md` / `config.yaml`).
 - Auth is OAuth 1.0a with four static keys generated once in the X developer
   portal (`server/bot/x_client.py`) — no token file or refresh loop, unlike
   LinkedIn's OAuth2 flow
+- One App's keys can be shared across several people's instances, same as this
+  project already shares one LinkedIn App: the owner auto-generates their own
+  access token in the portal, everyone else runs the PIN-based OAuth flow in
+  `server/bot/x_auth.py` (offered inline by `setup.wizard --source x`) to get
+  their own token for the same shared App
 - Reuses the same illustration posted to LinkedIn, uploaded separately to X's
   media endpoint; a failed media upload still posts the text rather than
   losing the post

@@ -1,15 +1,21 @@
 """X (Twitter) publish client — OAuth 1.0a user context.
 
 Unlike LinkedIn, X needs no token file and no expiry tracking: the four keys
-below are generated once in the developer portal for the poster's own account
-and pasted into .env. They don't rotate on their own; only a manual "revoke"
-in the portal kills them.
+below are generated once and pasted into .env. They don't rotate on their
+own; only a manual "revoke" in the portal kills them.
 
     X_API_KEY / X_API_SECRET             — the App's key pair
-    X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET — the owner's access token pair,
+    X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET — this account's access token pair,
         generated AFTER the App's permissions are set to "Read and write" —
         an access token generated before that stays read-only forever and
         every post 403s (see _fail's hint below).
+
+Two ways to get the access token pair, same pattern as LinkedIn's shared-App
+setup (server/bot/linkedin_auth.py): the App owner can auto-generate one
+directly in the developer portal for their own account, for free; anyone
+else posting through the SAME App (a second person, like Anton alongside
+dima here) needs their own token for their own account, gotten via the
+PIN-based OAuth flow in server/bot/x_auth.py.
 
 POST /2/tweets accepts OAuth 1.0a user context, and the v1.1 media/upload
 endpoint effectively requires it, so this one credential type covers both
