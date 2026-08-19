@@ -158,8 +158,8 @@ does this for you). Key ideas:
   freely. Types: `claude_projects_dir`, `claude_sessions` (with filter strategies
   `all | sql | command | id_file`), `ingest_dir`, `telegram`, `gmail`, `whatsapp`.
 - `pipeline:` timezone, cron, size caps, model, `always_hashtags` (asked
-  interactively by the wizard) — tags included verbatim on every LinkedIn post
-  and every X rewrite; the X rewrite is additionally asked to add a couple more
+  interactively by the wizard) — tags included verbatim on every X rewrite (not
+  the LinkedIn draft); the X rewrite is additionally asked to add a couple more
   tags relevant to that specific post.
 - `image:` illustration model, aspect ratio, size, regeneration cap — or
   `enabled: false` to skip the image step entirely.

@@ -247,12 +247,6 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
     task = _prompt_file(cfg, "draft_prompt", "draft-prompt.md").read_text(encoding="utf-8")
     task = (task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
                 .replace("{MAX_DRAFTS}", str(cfg.get("pipeline.max_drafts", 4))))
-    always_tags = _always_hashtags(cfg)
-    if always_tags:
-        tag_str = " ".join(f"#{t}" for t in always_tags)
-        task += (f"\n\nAlways include these exact hashtags, verbatim, in every post: {tag_str}. "
-                f"They count toward the style guide's 0-3 hashtag cap — add at most "
-                f"{max(0, 3 - len(always_tags))} more, only if truly relevant.\n")
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
     # Rarely, the model appends a trailing thinking-only turn after already

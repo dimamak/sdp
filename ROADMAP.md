@@ -61,6 +61,6 @@ git-ignored `PLAN.local.md` / `config.yaml`).
 - `x.enabled: false` by default; `/x` in Telegram recovers the step if the bot
   restarts between a LinkedIn publish and the X candidate being written
 - `pipeline.always_hashtags` (asked by the setup wizard) is included verbatim on
-  every LinkedIn draft AND every X rewrite; the X rewrite prompt separately asks
-  the agent to add 0-2 more tags relevant to that specific post, since X leans on
-  hashtags for discovery more than LinkedIn does
+  every X rewrite only, not the LinkedIn draft; the X rewrite prompt separately
+  asks the agent to add 0-2 more tags relevant to that specific post, since X
+  leans on hashtags for discovery more than LinkedIn does
