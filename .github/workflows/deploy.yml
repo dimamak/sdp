@@ -1,0 +1,42 @@
+name: Deploy
+
+# Auto-deploys main to the production server over SSH into a forced command
+# (server/ci_deploy.sh) - see docs/agent-guides/deployment.md for the design
+# and docs/self-hosting/ci-deploy.md for how to point this at your own server.
+#
+# Gated to the canonical repo so forks don't get a red X from missing
+# secrets on every push. Fork maintainers who want their own auto-deploy:
+# change the condition below and configure your own secrets.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    if: github.repository == 'dimamak/dailypost'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package release tree
+        run: |
+          echo "${{ github.sha }}" > .ci-deploy-commit
+          tar czf /tmp/deploy.tar.gz \
+            --exclude .git --exclude .venv --exclude __pycache__ --exclude data \
+            --exclude logs --exclude config.yaml --exclude .env --exclude '*.session' \
+            --exclude '*.local.md' --exclude push.conf --exclude .last_push \
+            .
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" < /tmp/deploy.tar.gz

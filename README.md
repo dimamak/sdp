@@ -123,6 +123,10 @@ The wizard handles: directories, venv, cron, systemd bot service, Telegram login
 LinkedIn OAuth guidance, Gemini image key. Every step is re-runnable:
 `python -m setup.wizard --source telegram`.
 
+Want `git push` to `main` to auto-deploy to your server? See
+[docs/self-hosting/ci-deploy.md](docs/self-hosting/ci-deploy.md) — optional,
+`server/deploy.sh` still works for manual deploys.
+
 ## Several people on one server
 
 Each person gets their own instance: separate config, secrets, store, Telegram
