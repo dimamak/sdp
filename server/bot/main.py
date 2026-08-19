@@ -19,14 +19,16 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
 from ..config import Config
-from ..pipeline.draft import converse, image_brief, x_rewrite
+from ..pipeline.draft import converse, image_brief, reddit_body, reddit_title, x_rewrite
 from ..pipeline.image_gen import ImageGenError, generate_image
 from ..store import Store
 from ..util import get_logger
@@ -87,6 +89,52 @@ def x_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🐦 Write X version", callback_data=f"xstart:{draft_id}")],
     ])
+
+
+def reddit_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Mark as posted", callback_data=f"rpost:{draft_id}"),
+         InlineKeyboardButton("🔁 New title", callback_data=f"rredo:{draft_id}")],
+        [InlineKeyboardButton("✏️ Edit title", callback_data=f"redit:{draft_id}"),
+         InlineKeyboardButton("⏭ Skip", callback_data=f"rskip:{draft_id}")],
+    ])
+
+
+def reddit_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    """Shown when the Reddit step was queued behind a still-running message."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📮 Reddit link", callback_data=f"rstart:{draft_id}")],
+    ])
+
+
+def reddit_submit_link(subreddit: str, title: str, body: str, max_chars: int = 4000) -> tuple[str, bool]:
+    """Prefilled Reddit submit URL. Returns (url, body_included).
+
+    quote(), not quote_plus() — Reddit's form reads a literal '+' in the body.
+    If the full URL would exceed max_chars, the body is dropped from the link
+    (title-only prefill); the body always still ships in its own copy-block
+    message regardless, so nothing is silently lost, only the prefill.
+    """
+    base = f"https://www.reddit.com/r/{subreddit}/submit?selftext=true"
+    title_q = f"&title={quote(title)}" if title else ""
+    full = f"{base}{title_q}&text={quote(body)}"
+    if len(full) <= max_chars:
+        return full, True
+    return f"{base}{title_q}", False
+
+
+def _tg_code_block(text: str) -> str:
+    """MarkdownV2 fenced code block — one-tap copyable and immune to Telegram
+    mangling the text as formatting. Inside code entities only '`' and '\\'
+    need escaping (Telegram's MarkdownV2 spec)."""
+    escaped = text.replace("\\", "\\\\").replace("`", "\\`")
+    return f"```\n{escaped}\n```"
+
+
+def _hours_since(sqlite_ts: str) -> float:
+    """Hours elapsed since a sqlite datetime('now') timestamp (space-separated, UTC)."""
+    then = datetime.strptime(sqlite_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - then).total_seconds() / 3600
 
 
 class Bot:
@@ -282,6 +330,8 @@ class Bot:
             fresh = self.store.get_draft(draft_id)
             if fresh is not None:
                 await self.start_x(context, fresh)
+        else:
+            await self.maybe_start_reddit(context, draft_id)
 
     # ---- X (Twitter) ---------------------------------------------------------
 
@@ -377,6 +427,110 @@ class Bot:
             self.store.update_x(xrow["id"], status="posted", tweet_id=tweet_id)
             link = x_tweet_url(tweet_id)
             await note.edit_text(f"✅ Posted to X{' with image' if media_id else ''}. {link}")
+
+        # lock released — Reddit's title call is another slow Claude call and
+        # self.busy is not reentrant, so it starts from out here, never from
+        # inside the block above (same rule publish() documents for start_x).
+        await self.maybe_start_reddit(context, draft_id)
+
+    # ---- Reddit (draft assist) -------------------------------------------------
+
+    async def maybe_start_reddit(self, context: ContextTypes.DEFAULT_TYPE, draft_id: int) -> None:
+        if not (self.cfg.get("reddit.enabled", False) and self.cfg.get("reddit.subreddit")):
+            return
+        fresh = self.store.get_draft(draft_id)
+        if fresh is not None and fresh["status"] == "posted" and not fresh["reddit_status"]:
+            await self.start_reddit(context, fresh)
+
+    async def _send_reddit_delivery(self, context: ContextTypes.DEFAULT_TYPE, draft_id: int,
+                                    subreddit: str, title: str, body: str) -> None:
+        """The three delivery messages — link+buttons, title, body — in that
+        order, chosen for one-thumb use on a phone. Title/body ship in their own
+        MarkdownV2 code blocks so Telegram makes them one-tap copyable and never
+        mangles the text as formatting."""
+        max_chars = int(self.cfg.get("reddit.max_link_chars", 4000))
+        link, body_included = reddit_submit_link(subreddit, title, body, max_chars)
+        head = f"📮 Reddit — r/{subreddit}\n{link}"
+        if not title:
+            head += "\n\n⚠️ title generation failed — type one on the form."
+        if not body_included:
+            head += "\n\n⚠️ body too long for the link — copy it from below."
+        sent = await context.bot.send_message(self.chat_id, head[:4000],
+                                              reply_markup=reddit_keyboard(draft_id))
+        self.store.set_reddit(draft_id, reddit_tg_message_id=str(sent.message_id))
+        if title:
+            await context.bot.send_message(self.chat_id, _tg_code_block(title)[:4000],
+                                           parse_mode="MarkdownV2")
+        await context.bot.send_message(self.chat_id, _tg_code_block(body)[:4000],
+                                       parse_mode="MarkdownV2")
+
+    async def start_reddit(self, context: ContextTypes.DEFAULT_TYPE, draft,
+                           force: bool = False) -> None:
+        """After the X step resolves (posts, is skipped, or is disabled): hand
+        you a prefilled Reddit submit link plus a copy block for the LinkedIn
+        text reused verbatim (see pipeline.draft.reddit_body and plan.md §2).
+        Nothing is submitted by code — see plan.md §1 for why this step is
+        assisted, not automated.
+
+        Acquires self.busy exactly once and never calls converse_turn/publish/
+        publish_x (the lock is not reentrant). "New title" and /reddit both
+        re-enter here from a handler, after release — same contract as
+        start_image/start_x.
+        """
+        draft_id = draft["id"]
+        if draft["status"] != "posted":
+            return  # nothing published yet for this draft to base a Reddit post on
+        if draft["reddit_status"] not in (None, "pending") and not force:
+            return  # idempotent — a double-tap or a stale /reddit can't duplicate
+        subreddit = str(self.cfg.get("reddit.subreddit", "buildinpublic"))
+
+        if not force:
+            last = self.store.last_posted_reddit()
+            min_hours = int(self.cfg.get("reddit.min_hours_between_posts", 48))
+            if last is not None and min_hours > 0:
+                age_h = _hours_since(last["updated_at"])
+                if age_h < min_hours:
+                    await context.bot.send_message(
+                        self.chat_id,
+                        f"Last Reddit post was {age_h:.0f}h ago; r/{subreddit} gets touchy "
+                        f"about daily self-promo. /reddit forces it.")
+                    return
+
+        if self.busy.locked():
+            await context.bot.send_message(
+                self.chat_id, "📮 Reddit step queued — tap when the current message finishes.",
+                reply_markup=reddit_start_keyboard(draft_id))
+            return
+
+        session_id = self.store.session_for_day(draft["day"])
+        post_text = draft["text"]
+        title_max = int(self.cfg.get("reddit.title_max", 300))
+        prev_msg_id = draft["reddit_tg_message_id"]
+
+        async with self.busy:
+            status = await context.bot.send_message(self.chat_id, "📮 writing the Reddit title…")
+            try:
+                title = await asyncio.to_thread(
+                    reddit_title, self.cfg, draft["day"], session_id, post_text,
+                    subreddit, title_max)
+            except Exception as e:
+                log.warning("reddit title failed: %s", e)
+                title = ""  # not fatal — you type it on the form instead
+
+            body = reddit_body(post_text)
+            self.store.set_reddit(draft_id, reddit_status="pending", reddit_title=title)
+            self.active_draft_id = draft_id
+
+            # only the newest delivery message keeps live buttons
+            if prev_msg_id:
+                try:
+                    await context.bot.edit_message_reply_markup(
+                        self.chat_id, int(prev_msg_id), reply_markup=None)
+                except Exception:
+                    pass
+
+            await status.delete()
+            await self._send_reddit_delivery(context, draft_id, subreddit, title, body)
 
     # ---- handlers ------------------------------------------------------------
 
@@ -489,10 +643,46 @@ class Bot:
                 self.store.update_x(xrow["id"], status="discarded")
             await q.edit_message_reply_markup(None)
             await context.bot.send_message(self.chat_id, "⏭ X skipped.")
+            await self.maybe_start_reddit(context, draft_id)
 
         elif action == "xstart":
             await q.edit_message_reply_markup(None)
             await self.start_x(context, draft)
+
+        elif action == "rpost":
+            if draft["reddit_status"] != "pending":
+                await context.bot.send_message(self.chat_id, "No Reddit link is waiting on that draft.")
+                return
+            await q.edit_message_reply_markup(None)
+            subreddit = str(self.cfg.get("reddit.subreddit", "buildinpublic"))
+            self.store.set_reddit(draft_id, reddit_status="posted")
+            await context.bot.send_message(
+                self.chat_id,
+                f"✅ Marked posted to r/{subreddit}. Reply here with the URL if you'd "
+                "like it recorded (optional).")
+
+        elif action == "rredo":
+            await q.edit_message_reply_markup(None)
+            await self.start_reddit(context, draft, force=True)
+
+        elif action == "redit":
+            prev = self.store.editing_reddit()
+            if prev is not None and prev["id"] != draft_id:
+                self.store.set_reddit(prev["id"], reddit_status="pending")
+            self.store.set_reddit(draft_id, reddit_status="editing")
+            await context.bot.send_message(
+                self.chat_id,
+                "✏️ Send the exact replacement title as your next message "
+                "(it will be used verbatim, the model won't see it).")
+
+        elif action == "rskip":
+            self.store.set_reddit(draft_id, reddit_status="skipped")
+            await q.edit_message_reply_markup(None)
+            await context.bot.send_message(self.chat_id, "⏭ Reddit skipped.")
+
+        elif action == "rstart":
+            await q.edit_message_reply_markup(None)
+            await self.start_reddit(context, draft)
 
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.allowed(update) or not update.message or not update.message.text:
@@ -532,6 +722,31 @@ class Bot:
                 await self.start_x(context, d, feedback=text)
                 return
 
+        # explicit verbatim-replace mode for the Reddit title (set by "Edit title").
+        # Safe alongside the X checks above: once the Reddit step is live the X
+        # row is posted/discarded/failed, so it no longer matches pending_x's
+        # status='pending_review' filter.
+        redit = self.store.editing_reddit()
+        if redit is not None:
+            title = text.strip()
+            title_max = int(self.cfg.get("reddit.title_max", 300))
+            if len(title) > title_max:
+                await update.message.reply_text(
+                    f"That's {len(title)} chars — Reddit's title cap is {title_max}.")
+                return
+            subreddit = str(self.cfg.get("reddit.subreddit", "buildinpublic"))
+            body = reddit_body(redit["text"])
+            prev_msg_id = redit["reddit_tg_message_id"]
+            if prev_msg_id:
+                try:
+                    await context.bot.edit_message_reply_markup(
+                        self.chat_id, int(prev_msg_id), reply_markup=None)
+                except Exception:
+                    pass
+            self.store.set_reddit(redit["id"], reddit_status="pending", reddit_title=title)
+            await self._send_reddit_delivery(context, redit["id"], subreddit, title, body)
+            return
+
         # everything else is a conversation turn in the day's session, about the
         # draft you replied to (or the last one you touched)
         await self.converse_turn(context, text, target=self.target_draft(update))
@@ -555,10 +770,13 @@ class Bot:
         sess = self.store.latest_day_session()
         x_status = ("disabled" if not self.cfg.get("x.enabled", False)
                    else "ready" if self.x.configured() else "enabled but keys missing")
+        reddit_status = ("disabled" if not self.cfg.get("reddit.enabled", False)
+                         else f"r/{self.cfg.get('reddit.subreddit', 'buildinpublic')}")
         await update.message.reply_text(
             f"dailypost alive. Items last 24h: {row['c']}. "
             f"LinkedIn token: {'n/a' if days is None else f'{days}d left'}. "
             f"X: {x_status}. "
+            f"Reddit: {reddit_status}. "
             f"Session day: {sess['day'] if sess else 'none'}.")
 
     async def on_x(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -575,6 +793,22 @@ class Bot:
             return
         self.active_draft_id = draft["id"]
         await self.start_x(context, draft)
+
+    async def on_reddit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/reddit — recover the Reddit step for a draft that published to
+        LinkedIn but never got one started (e.g. the bot restarted in between),
+        or force it past the cadence nudge."""
+        if not self.allowed(update):
+            return
+        if not (self.cfg.get("reddit.enabled", False) and self.cfg.get("reddit.subreddit")):
+            await update.message.reply_text("Reddit posting is not enabled/configured.")
+            return
+        draft = self.store.draft_awaiting_reddit()
+        if draft is None:
+            await update.message.reply_text("Nothing waiting for a Reddit step right now.")
+            return
+        self.active_draft_id = draft["id"]
+        await self.start_reddit(context, draft, force=True)
 
     async def on_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.allowed(update):
@@ -599,7 +833,13 @@ class Bot:
             "If X posting is enabled, once a post reaches LinkedIn I write a separate, "
             "shorter X-native rewrite and send it with its own buttons — nothing reaches "
             "X until you tap Post to X, and skipping or failing that never touches the "
-            "LinkedIn post already made. /x recovers that step if I ever miss it.\n"
+            "LinkedIn post already made. /x recovers that step if I ever miss it.\n\n"
+            "If Reddit posting is enabled, once the X step resolves (posts, is skipped, "
+            "or is disabled) you get a prefilled Reddit submit link plus a copy block — "
+            "the LinkedIn text reused verbatim (hashtags stripped) with a short generated "
+            "title, since Reddit needs one and LinkedIn posts don't have one. Nothing is "
+            "ever submitted by me; you tap Submit yourself in your browser. /reddit "
+            "recovers that step if I ever miss it.\n"
             "/status shows health.")
 
 
@@ -653,6 +893,7 @@ def main() -> None:
     app.add_handler(CommandHandler("help", bot.on_help))
     app.add_handler(CommandHandler("talk", bot.on_talk))
     app.add_handler(CommandHandler("x", bot.on_x))
+    app.add_handler(CommandHandler("reddit", bot.on_reddit))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.on_message))
     log.info("bot polling started")
     app.run_polling(allowed_updates=["message", "callback_query"])

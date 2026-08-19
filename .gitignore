@@ -18,3 +18,7 @@ venv/
 .DS_Store
 Thumbs.db
 PLAN.local.md
+
+# Coding agent session artifacts
+.claude/
+.mcp.json

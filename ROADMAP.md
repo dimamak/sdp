@@ -64,3 +64,25 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   every X rewrite only, not the LinkedIn draft; the X rewrite prompt separately
   asks the agent to add 0-2 more tags relevant to that specific post, since X
   leans on hashtags for discovery more than LinkedIn does
+
+## Phase 6 — Reddit draft assist  ✅ implemented
+- Reddit closed self-serve API access to new apps (the Devvit path is a dead
+  end for a simple cross-poster) and this server's IP is separately blocked
+  by `oauth.reddit.com` — so unlike X, this step is *assisted, not automated*:
+  it never submits anything. After the LinkedIn publish (and X, if enabled)
+  resolves, Telegram delivers a prefilled `reddit.com/r/<sub>/submit` link plus
+  copy-paste title/body blocks, and a real human tap in a real browser is what
+  actually posts
+- The same day's Claude session writes only a short Reddit-appropriate title;
+  the body reuses the LinkedIn text verbatim (hashtags stripped) rather than a
+  full Reddit-native rewrite — X already proved the rewrite pattern works, but
+  a second full rewrite step wasn't justified until there's evidence
+  r/buildinpublic-style audiences actually react badly to LinkedIn-voice copy.
+  If that turns out to be false, the next step is a `reddit_rewrite()`
+  alongside `x_rewrite()`, not a bigger version of this feature
+- `reddit.min_hours_between_posts` adds a cadence nudge (never a block) to the
+  delivery message; `reddit.enabled: false` by default; `/reddit` in Telegram
+  recovers the step if the bot restarts before the link is sent
+- No OAuth client, token file, or API credentials of any kind — the contingency
+  plan for a real posting integration (once Reddit's API situation changes) is
+  kept spec'd but deliberately unbuilt

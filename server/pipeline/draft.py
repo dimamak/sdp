@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -235,6 +236,99 @@ def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
                                      f"{limit} limit. Cut content, don't just trim words off the end.")
         text = _ask(retry_prompt)
     return text
+
+
+REDDIT_TITLE_PROMPT = """You wrote a LinkedIn post for {day} and it has already been
+published. The same text will be reused verbatim as a Reddit text post in
+r/{subreddit} — write ONLY the title for it; LinkedIn posts don't have one and
+Reddit requires one.
+
+The published LinkedIn post:
+\"\"\"
+{post_text}
+\"\"\"
+{extra}
+Rules:
+- A statement or a question, in r/{subreddit}'s register. Not a headline, not
+  clickbait, no "Here's what I learned".
+- No hashtags, no emoji, no ALL-CAPS — they read as spam on Reddit.
+- Concrete over vague — name the actual thing that happened.
+- Hard limit: {limit} characters. Aim for 60-120.
+
+Return ONLY a JSON object, no other text:
+{{"title": "the title, ready to post"}}
+"""
+
+REDDIT_TITLE_REVISION = """
+Your previous attempt was:
+\"\"\"
+{prev_title}
+\"\"\"
+Problem with it: {feedback}
+Revise it to fix that. Keep everything else that worked.
+"""
+
+
+def reddit_title(cfg, day, session_id, post_text,
+                 subreddit="", limit=300) -> str:
+    """Ask for a title-only Reddit companion to an already-published LinkedIn post.
+
+    The body is the LinkedIn text reused verbatim (see reddit_body) — Reddit's
+    only real gap is the missing title. Same session-resume-then-fallback
+    structure as x_rewrite, so the title comes from the day's story rather than
+    a re-reading of the LinkedIn post's wording. Takes plain values, no Store:
+    safe to call from asyncio.to_thread.
+
+    Retries once, internally, if the model's own answer runs over `limit`.
+    """
+    prompt = REDDIT_TITLE_PROMPT.format(
+        day=day, post_text=post_text, extra="", subreddit=subreddit or "buildinpublic",
+        limit=limit)
+
+    def _ask(p: str) -> str:
+        if session_id:
+            try:
+                result = run_claude(cfg, p, session_id=session_id, resume=True, timeout=300)
+            except Exception as e:
+                log.warning("reddit title: session %s unusable (%s) — falling back", session_id, e)
+                result = run_claude(cfg, p, timeout=300)
+        else:
+            result = run_claude(cfg, p, timeout=300)
+        data = extract_json(result)
+        title = (data.get("title") or "").strip()
+        if not title:
+            raise ValueError(f"no title in response: {result[:300]}")
+        return title
+
+    title = _ask(prompt)
+    if len(title) > limit:
+        over = len(title) - limit
+        retry_prompt = prompt + REDDIT_TITLE_REVISION.format(
+            prev_title=title, feedback=f"that was {len(title)} characters, {over} over the "
+                                       f"{limit} limit. Cut words, don't just truncate the end.")
+        title = _ask(retry_prompt)
+    return title
+
+
+_HASHTAG_LINE_RE = re.compile(r"(?m)^[ \t]*(?:#\w+[ \t]*)+$\n?")
+_TRAILING_HASHTAG_RUN_RE = re.compile(r"(?:[ \t]*#\w+)+[ \t]*$")
+_EXTRA_BLANK_LINES_RE = re.compile(r"\n{3,}")
+
+
+def reddit_body(text: str) -> str:
+    """LinkedIn draft text -> the box on the Reddit submit form.
+
+    Reuses the text verbatim except for hashtags, which read as spam on Reddit
+    and are a LinkedIn-only convention here (pipeline.always_hashtags is scoped
+    to X posts only, but the drafting agent still adds its own to the LinkedIn
+    text sometimes). Deliberately NOT reformatting or "de-LinkedIn-ing" the
+    prose beyond that — see plan.md §2 for why a fuller rewrite is a separate,
+    evidence-gated upgrade.
+    """
+    out = _HASHTAG_LINE_RE.sub("", text)
+    out = _TRAILING_HASHTAG_RUN_RE.sub("", out)
+    out = _EXTRA_BLANK_LINES_RE.sub("\n\n", out)
+    return out.strip()
 
 
 def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dict]]:

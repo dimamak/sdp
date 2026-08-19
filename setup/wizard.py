@@ -668,6 +668,30 @@ def step_x(data: dict) -> None:
         print("  Later: python -m server.bot.x_client --check")
 
 
+def step_reddit(data: dict) -> None:
+    """Reddit draft assist. Not auto-posting — Reddit closed self-service API
+    access in late 2025 and this kind of server is commonly IP-blocked from
+    oauth.reddit.com regardless of credentials, so once the X step resolves you
+    get a prefilled Reddit submit link plus a copy block (the LinkedIn text
+    reused verbatim, hashtags stripped, with a short generated title) and you
+    tap Submit yourself. See README's "Also post to Reddit" for the why."""
+    print("\n== Reddit (draft assist) ==")
+    print("  This does NOT post to Reddit for you — once the X step resolves you get")
+    print("  a prefilled submit link and a copy block in Telegram, and you tap Submit")
+    print("  yourself in your browser. No credentials, no auth flow, no API calls.")
+    sub = ask("subreddit to post to (without r/)",
+             str(data.get("reddit", {}).get("subreddit", "") or "buildinpublic"))
+    sub = sub.strip().removeprefix("r/").removeprefix("/r/").strip("/") or "buildinpublic"
+
+    reddit = data.setdefault("reddit", {})
+    reddit["enabled"] = True
+    reddit["subreddit"] = sub
+    reddit.setdefault("title_max", 300)
+    reddit.setdefault("min_hours_between_posts", 48)
+    reddit.setdefault("max_link_chars", 4000)
+    ok(f"Reddit draft assist on for r/{sub}")
+
+
 def step_image(data: dict) -> None:
     """Post illustrations via the Gemini API. Only needs an API key."""
     print("\n== Post images ==")
@@ -1068,8 +1092,8 @@ def doctor() -> int:
 STEPS = {
     "base": step_base, "claude": step_claude, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
-    "pair": step_pair, "linkedin": step_linkedin, "x": step_x, "image": step_image,
-    "laptop": step_laptop, "cron": step_cron, "systemd": step_systemd,
+    "pair": step_pair, "linkedin": step_linkedin, "x": step_x, "reddit": step_reddit,
+    "image": step_image, "laptop": step_laptop, "cron": step_cron, "systemd": step_systemd,
 }
 
 
@@ -1136,6 +1160,12 @@ def _done_x(data):
         return "configured"
 
 
+def _done_reddit(data):
+    r = data.get("reddit", {})
+    if r.get("enabled") and r.get("subreddit"):
+        return f"r/{r['subreddit']}"
+
+
 def _done_image(data):
     if env_get("GEMINI_API_KEY") and data.get("image", {}).get("enabled"):
         return f"images on ({data['image'].get('model', 'gemini-3-pro-image')})"
@@ -1160,8 +1190,8 @@ def _done_laptop(data):
 DONE_PROBES = {
     "base": _done_base, "claude": _done_claude, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
-    "pair": _done_pair, "linkedin": _done_linkedin, "x": _done_x, "image": _done_image,
-    "laptop": _done_laptop, "cron": _done_cron, "systemd": _done_systemd,
+    "pair": _done_pair, "linkedin": _done_linkedin, "x": _done_x, "reddit": _done_reddit,
+    "image": _done_image, "laptop": _done_laptop, "cron": _done_cron, "systemd": _done_systemd,
 }
 
 

@@ -152,6 +152,30 @@ x:
   # dry_run: true                      # log the request body, publish nothing
 
 # ---------------------------------------------------------------------------
+# Reddit draft assist (optional, off by default).
+# Runs AFTER the X step resolves — LinkedIn -> X -> Reddit — and only ever after
+# the LinkedIn post actually published.
+# NOTE: this does NOT post to Reddit, by design. Reddit closed self-service API
+# access in late 2025 (new apps route to Devvit, which can't post as you from
+# your own server), and this host's IP is blocked from oauth.reddit.com by
+# Reddit's network policy — approved credentials do not exempt you. So: you get
+# a prefilled submit link and a copy block, and you tap Submit yourself. The
+# post body is the LinkedIn text with hashtags stripped, reused verbatim; see
+# README's "Also post to Reddit" section for why.
+# ---------------------------------------------------------------------------
+reddit:
+  enabled: false
+  subreddit: buildinpublic        # ONE sub you actually participate in. Posting the
+                                  # same content to several subs is what trips
+                                  # Reddit's spam filter.
+  title_max: 300                  # Reddit's hard cap; the title call targets it
+  min_hours_between_posts: 48     # below this the step doesn't auto-start — daily
+                                  # self-promo to one sub reads as spam. /reddit
+                                  # forces it anyway. 0 = no guard.
+  max_link_chars: 4000            # above this the prefilled link carries the title
+                                  # only; the body stays in the copy block
+
+# ---------------------------------------------------------------------------
 # Post illustrations (Gemini API — an API key, no GCP project needed).
 # Approve becomes two steps: it draws an image for the post and sends it back for
 # confirmation; nothing reaches LinkedIn until you tap Post with image (or Post

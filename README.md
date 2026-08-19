@@ -16,6 +16,12 @@ rewrite (not a truncation — X's limit is 280 chars against LinkedIn's
 buttons. Nothing reaches X until that second tap either, and nothing in that
 step can affect the LinkedIn post already made. See [Also post to X](#also-post-to-x).
 
+It can also hand you a ready-to-submit **Reddit** draft: a prefilled submit
+link plus copy-paste title/body, reusing the LinkedIn text as-is (Reddit's API
+is effectively closed to new self-serve apps, so nothing is submitted by
+code — you tap Submit yourself, in your own browser, in your own session). See
+[Also post to Reddit](#also-post-to-reddit).
+
 Runs on any Linux server + optional laptop; nothing instance-specific is in the
 code — everything lives in `config.yaml` / `.env` (both git-ignored).
 
@@ -26,7 +32,8 @@ laptop ──(nightly tar-over-ssh)──▶ ingest/           screenshots, Clau
 server harvesters ───────────────▶ SQLite store      telegram, gmail, whatsapp, claude sessions
 nightly cron: digest ─▶ claude -p ─▶ draft ─▶ Telegram bot
                                              └▶ [Approve] ─▶ image ─▶ [Post] ─▶ LinkedIn
-                                                                          └▶ rewrite ─▶ [Post to X] ─▶ X
+                                                                          ├▶ rewrite ─▶ [Post to X] ─▶ X
+                                                                          └▶ Reddit link ─▶ [tap Submit yourself]
 ```
 
 - **Claude Code sessions** are read from `~/.claude/projects/**/*.jsonl` — locally,
@@ -99,6 +106,33 @@ Set it up with `.venv/bin/python -m setup.wizard --source x`. Probes that don't
 touch your timeline: `python -m server.bot.x_client --dry-run "text"` and
 `--check`.
 
+## Also post to Reddit
+
+Turned on with `reddit.enabled: true`. Reddit closed self-serve API access to
+new apps (the old PRAW/Devvit path is a dead end), and this server's IP is
+separately blocked by `oauth.reddit.com` — so this step doesn't post at all.
+Once the LinkedIn publish (and, if enabled, the X step) resolves, the same
+day's Claude session writes a short Reddit-appropriate **title** for the
+post, the LinkedIn body is reused as-is (hashtags stripped — Reddit doesn't
+use them), and Telegram sends a prefilled
+`reddit.com/r/<sub>/submit?...` link plus one-tap-copyable title/body code
+blocks with **Mark as posted / New title / Edit title / Skip** buttons. You
+open the link, review it, and tap Submit yourself — nothing is ever
+submitted by code, and skipping or failing this step never touches the
+LinkedIn (or X) post already made.
+
+- No account, API keys, or OAuth app needed — this is draft assist, not
+  posting.
+- `reddit.subreddit` is a single subreddit (no cross-posting, no flair); the
+  wizard asks for it without the `r/` prefix.
+- `reddit.min_hours_between_posts` (default 48) adds a one-line cadence nudge
+  to the delivery message if you're posting to the subreddit faster than
+  that — it never blocks you, just flags it.
+- If the bot restarts between a LinkedIn publish and the Reddit link being
+  sent, `/reddit` in Telegram recovers it.
+
+Set it up with `.venv/bin/python -m setup.wizard --source reddit`.
+
 ## Setup
 
 Server:
@@ -169,6 +203,9 @@ does this for you). Key ideas:
   `enabled: false` to skip the image step entirely.
 - `x:` char limit, rewrite cap, how long a candidate stays steerable — `enabled:
   false` (the default) skips the X step entirely; see [Also post to X](#also-post-to-x).
+- `reddit:` subreddit, title char cap, cadence nudge threshold — `enabled:
+  false` (the default) skips the Reddit step entirely; see [Also post to
+  Reddit](#also-post-to-reddit).
 - Style/voice of the drafts: edit `server/pipeline/prompts/style-guide.md`; the
   look of the images: `image.style_suffix` in `config.yaml`.
 

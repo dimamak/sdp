@@ -128,8 +128,12 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
-        # nothing to backfill today; the hook exists so the next column is a one-liner
-        _ensure_columns(self.db, "drafts", {})
+        _ensure_columns(self.db, "drafts", {
+            "reddit_status": "TEXT",          # NULL|pending|editing|posted|skipped
+            "reddit_title": "TEXT",
+            "reddit_permalink": "TEXT",       # optional, if you paste the URL back
+            "reddit_tg_message_id": "TEXT",
+        })
         _ensure_columns(self.db, "draft_x", {})
         self.db.commit()
 
@@ -220,13 +224,13 @@ class Store:
     def draft_by_tg_message(self, tg_message_id: str | int) -> sqlite3.Row | None:
         """Resolve which draft a Telegram reply refers to.
 
-        Also matches the photo/confirm messages of the image flow and the X
-        candidate messages, so replying to any of those, or the original draft,
-        works.
+        Also matches the photo/confirm messages of the image flow, the X
+        candidate messages, and the Reddit delivery message, so replying to any
+        of those, or the original draft, works.
         """
         mid = str(tg_message_id)
         return self.db.execute(
-            "SELECT d.* FROM drafts d WHERE d.tg_message_id=?"
+            "SELECT d.* FROM drafts d WHERE d.tg_message_id=? OR d.reddit_tg_message_id=?"
             " UNION ALL"
             " SELECT d.* FROM drafts d JOIN draft_images i ON i.draft_id=d.id"
             "  WHERE i.tg_message_id=? OR i.tg_photo_message_id=?"
@@ -234,7 +238,7 @@ class Store:
             " SELECT d.* FROM drafts d JOIN draft_x x ON x.draft_id=d.id"
             "  WHERE x.tg_message_id=?"
             " LIMIT 1",
-            (mid, mid, mid, mid),
+            (mid, mid, mid, mid, mid),
         ).fetchone()
 
     def has_drafts_for_day(self, day: str) -> bool:
@@ -378,4 +382,46 @@ class Store:
             " AND id NOT IN (SELECT draft_id FROM draft_x)"
             " ORDER BY id DESC LIMIT 1",
             (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    # ---- Reddit (draft assist — reuses the LinkedIn text, see draft.reddit_body) ----
+    def set_reddit(self, draft_id: int, **fields) -> None:
+        """Thin wrapper over update_draft; fields are the reddit_* column names,
+        e.g. set_reddit(id, reddit_status='posted', reddit_permalink=url)."""
+        self.update_draft(draft_id, **fields)
+
+    def pending_reddit(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """The draft currently awaiting your Reddit Submit tap, if still recent.
+
+        Age-bounded from the start — see pending_image()'s comment on why an
+        unbounded version would swallow every later free-text message forever.
+        """
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE reddit_status='pending'"
+            " AND updated_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def editing_reddit(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """The draft whose Reddit title you're about to replace verbatim, if recent."""
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE reddit_status='editing'"
+            " AND updated_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def draft_awaiting_reddit(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """A LinkedIn draft that was posted but never got a Reddit step started —
+        e.g. the bot restarted between the X step and this one. Used by /reddit."""
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE status='posted' AND reddit_status IS NULL"
+            " AND updated_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def last_posted_reddit(self) -> sqlite3.Row | None:
+        """Most recent draft actually marked posted to Reddit — the cadence nudge."""
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE reddit_status='posted'"
+            " ORDER BY updated_at DESC LIMIT 1"
         ).fetchone()
