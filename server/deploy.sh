@@ -12,6 +12,6 @@ tar czf - -C "$SRC" \
   --exclude .git --exclude .venv --exclude __pycache__ --exclude data \
   --exclude logs --exclude config.yaml --exclude .env --exclude '*.session' \
   --exclude '*.local.md' --exclude push.conf --exclude .last_push \
-  . | ssh "$HOST" "mkdir -p '$DIR' && tar xzf - -C '$DIR'${OWNER:+ && chown -R $OWNER: '$DIR'}"
+  . | ssh "$HOST" "mkdir -p '$DIR' && tar xzf - -C '$DIR' && chmod +x '$DIR/server/run_nightly.sh'${OWNER:+ && chown -R $OWNER: '$DIR'}"
 echo "done. On the server: cd $DIR && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 echo "then: .venv/bin/python -m setup.wizard"
