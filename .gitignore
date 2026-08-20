@@ -22,3 +22,6 @@ PLAN.local.md
 # Coding agent session artifacts
 .claude/
 .mcp.json
+.codegraph/
+.codegraph-init.log
+uploads/

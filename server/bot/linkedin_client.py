@@ -39,7 +39,13 @@ CONTENT_TYPE_BY_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 _LI_RESERVED = set(r"\|{}@[]()<>#*_~")
 # A hashtag must survive as a real hashtag, so it can't just be escaped — it goes
 # through the HashtagTemplate instead, whose own {, | and } are syntax.
-_HASHTAG_RE = re.compile(r"(?<!\w)#(\w+)")
+# A page mention needs the org's numeric urn, which plain "@Name" text can't carry,
+# so the input syntax borrows markdown-link shape: @[Name](linkedin.com/company/slug).
+_TAG_RE = re.compile(
+    r"(?<!\w)#(?P<hashtag>\w+)"
+    r"|@\[(?P<mtext>[^\]]+)\]\((?P<murl>https?://(?:www\.)?linkedin\.com/company/[^)\s]+)\)"
+)
+_ORG_ID_RE = re.compile(r'f_C=(\d{4,})|facetCurrentCompany[^"\']*?(\d{4,})')
 
 
 def _escape_run(s: str) -> str:
@@ -47,12 +53,50 @@ def _escape_run(s: str) -> str:
     return "".join(("\\" + c) if c in _LI_RESERVED else c for c in s)
 
 
+def _company_slug(url: str) -> str:
+    return url.rstrip("/").split("/company/", 1)[1].split("/")[0].split("?")[0]
+
+
+def resolve_organization_urn(slug: str) -> str | None:
+    """Best-effort numeric id for a LinkedIn company page, for @mentions.
+
+    LinkedIn's Organization Lookup API needs org-admin scopes this app doesn't
+    have (see SCOPES in linkedin_auth.py) and, even granted, generally only
+    resolves pages you administer — not arbitrary third parties like the ones
+    we'd want to tag in a post. Instead this reads the public, logged-out
+    company page for the numeric id LinkedIn itself embeds in that page's own
+    job/people-search facet links. Unofficial and markup-dependent, so it fails
+    soft (None): a bad slug or a LinkedIn markup change degrades one mention to
+    plain text instead of blocking the whole post.
+    """
+    if slug.isdigit():
+        return f"urn:li:organization:{slug}"
+    try:
+        r = requests.get(f"https://www.linkedin.com/company/{slug}/", timeout=15,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code >= 300:
+            return None
+        m = _ORG_ID_RE.search(r.text)
+        return f"urn:li:organization:{m.group(1) or m.group(2)}" if m else None
+    except requests.RequestException:
+        return None
+
+
 def escape_commentary(text: str) -> str:
-    """Plain post text -> /rest/posts `commentary`. Hashtags stay clickable."""
+    """Plain post text -> /rest/posts `commentary`. Hashtags stay clickable;
+    @[Name](https://linkedin.com/company/slug) becomes a real, linked page mention."""
     out, pos = [], 0
-    for m in _HASHTAG_RE.finditer(text):
+    for m in _TAG_RE.finditer(text):
         out.append(_escape_run(text[pos:m.start()]))
-        out.append("{hashtag|\\#|" + m.group(1) + "}")
+        if m.group("hashtag"):
+            out.append("{hashtag|\\#|" + m.group("hashtag") + "}")
+        else:
+            urn = resolve_organization_urn(_company_slug(m.group("murl")))
+            if urn:
+                out.append("{mention|" + urn + "|" + _escape_run(m.group("mtext")) + "}")
+            else:
+                log.warning("mention lookup failed for %s — posting as plain text", m.group("murl"))
+                out.append(_escape_run("@" + m.group("mtext")))
         pos = m.end()
     out.append(_escape_run(text[pos:]))
     return "".join(out)

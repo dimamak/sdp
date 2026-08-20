@@ -123,6 +123,13 @@ linkedin:
                                        # characters \|{}@[]()<>#*_~ must be escaped or
                                        # the post 422s. Hashtags are converted to real
                                        # hashtags rather than escaped. Leave this on.
+                                       # To tag a page (a real, clickable mention — not
+                                       # just the text "@Name"), write:
+                                       #   @[Name](https://www.linkedin.com/company/slug/)
+                                       # The org id is resolved from that public page at
+                                       # post time (no caching, no extra API scope). If
+                                       # the lookup fails it falls back to plain "@Name"
+                                       # text rather than blocking the post.
   rest_fallback_v2: true               # if /rest/posts 403s because the app was never
                                        # granted versioned-API access, retry TEXT-ONLY
                                        # posts on the legacy /v2/ugcPosts path instead
