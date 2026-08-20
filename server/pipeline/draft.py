@@ -27,6 +27,57 @@ def _always_hashtags(cfg) -> list[str]:
            if t and t.strip()]
 
 
+DEAI_PROMPT = """{skill}
+
+---
+
+Apply the ruleset above to the text below. This runs unattended as part of a
+posting pipeline — there is no human to hand a report to, so just do the
+rewrite and hand back the result, nothing else.
+
+Text:
+\"\"\"
+{text}
+\"\"\"
+
+Return ONLY a JSON object, no other text:
+{{"cleaned_text": "the fully rewritten text, ready to publish",
+  "flagged": "one short note on any thin claim, unsupported number, or contradiction left for a human to judge, or empty string if none"}}
+"""
+
+
+def deai_cleanup(cfg, text: str) -> str:
+    """Run the de-AI skill as a standalone pass over a finished piece of draft text.
+
+    Deliberately a separate `claude -p` call rather than folding into the
+    drafting prompt: a model grading its own prose in the same turn it wrote
+    it is exactly the "self-narrating rigor" failure mode the skill flags.
+    A fresh, single-purpose call catches more than the AI-tells reminder
+    already baked into draft-prompt.md's final-pass instruction.
+
+    Never raises — any failure here falls back to the pre-cleanup text rather
+    than losing a draft over a cleanup step.
+    """
+    if not text.strip():
+        return text
+    skill = _prompt_file(cfg, "deai_skill", "deai-skill.md").read_text(encoding="utf-8")
+    prompt = DEAI_PROMPT.format(skill=skill, text=text)
+    try:
+        result = run_claude(cfg, prompt, timeout=300)
+        data = extract_json(result)
+    except Exception as e:
+        log.warning("deai cleanup failed (%s) — keeping pre-cleanup text", e)
+        return text
+    cleaned = (data.get("cleaned_text") or "").strip()
+    if not cleaned:
+        log.warning("deai cleanup returned no cleaned_text — keeping pre-cleanup text")
+        return text
+    flagged = (data.get("flagged") or "").strip()
+    if flagged:
+        log.info("deai cleanup flagged for review: %s", flagged)
+    return cleaned
+
+
 FOLLOW_UP_PROMPT = """The user is reviewing the LinkedIn draft you wrote for {day}.
 Their message:
 \"\"\"
@@ -69,6 +120,8 @@ def converse(cfg, store, day: str, session_id: str, message: str,
     except ValueError:
         return result.strip()[:2000], None
     post = (data.get("post_text") or "").strip() or None
+    if post:
+        post = deai_cleanup(cfg, post)
     return (data.get("reply") or "").strip() or "(no reply)", post
 
 
@@ -235,6 +288,12 @@ def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
             prev_text=text, feedback=f"that was {len(text)} characters, {over} over the "
                                      f"{limit} limit. Cut content, don't just trim words off the end.")
         text = _ask(retry_prompt)
+    cleaned = deai_cleanup(cfg, text)
+    if len(cleaned) <= limit:
+        text = cleaned
+    else:
+        log.warning("deai cleanup pushed X rewrite over the %d limit (%d chars) — keeping pre-cleanup text",
+                    limit, len(cleaned))
     return text
 
 
@@ -307,6 +366,12 @@ def reddit_title(cfg, day, session_id, post_text,
             prev_title=title, feedback=f"that was {len(title)} characters, {over} over the "
                                        f"{limit} limit. Cut words, don't just truncate the end.")
         title = _ask(retry_prompt)
+    cleaned = deai_cleanup(cfg, title)
+    if len(cleaned) <= limit:
+        title = cleaned
+    else:
+        log.warning("deai cleanup pushed reddit title over the %d limit (%d chars) — keeping pre-cleanup title",
+                    limit, len(cleaned))
     return title
 
 
@@ -365,6 +430,7 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
         text = (cand.get("post_text") or "").strip()
         if not text:
             continue
+        text = deai_cleanup(cfg, text)
         ids.append(store.add_draft(
             day=day, text=text,
             rationale=cand.get("why") or cand.get("fact"),
