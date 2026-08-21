@@ -150,9 +150,12 @@ linkedin:
 # ---------------------------------------------------------------------------
 x:
   enabled: false
-  max_chars: 280                       # X's default cap; raise only if the posting
-                                       # account has X Premium (note_tweet, up to
-                                       # ~25,000 chars) — this app does not use that field
+  max_chars: 280                       # Free-tier cap. Auto-raised per post to
+                                       # premium_max_chars if the connected account's
+                                       # own X subscription_type comes back non-empty
+                                       # (GET /2/users/me) — no manual edit needed.
+  # premium_max_chars: 25000           # cap used instead of max_chars when the account
+                                       # has any paid X subscription (default 25000)
   max_rewrites: 5                      # "Rewrite" cap per draft, like image.max_regenerations.
                                        # 0 = no cap. Failed attempts don't count against it.
   pending_hours: 12                    # how long a candidate stays steerable by free text

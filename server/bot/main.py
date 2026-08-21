@@ -37,6 +37,8 @@ from .x_client import XClient, tweet_url as x_tweet_url
 
 log = get_logger("bot")
 
+X_PREMIUM_MAX_CHARS = 25000  # X's long-form post cap for Premium/Premium+ subscribers
+
 ANOTHER_STORY_MSG = ("Write a different angle on the post under discussion, or a post for "
                      "another fact from today if this one is exhausted. Say briefly what changed.")
 
@@ -365,6 +367,13 @@ class Bot:
         prev_text = prev["text"] if prev else None
         post_text = draft["text"]
         limit = int(self.cfg.get("x.max_chars", 280))
+        try:
+            sub = await asyncio.to_thread(self.x.subscription_type)
+            if sub:
+                limit = max(limit, int(self.cfg.get("x.premium_max_chars", X_PREMIUM_MAX_CHARS)))
+                log.info("X account has subscription %r — using %d-char limit", sub, limit)
+        except Exception as e:
+            log.warning("X subscription check failed (%s) — keeping %d-char limit", e, limit)
 
         async with self.busy:
             status = await context.bot.send_message(self.chat_id, "✍️ writing the X version…")

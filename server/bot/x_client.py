@@ -152,6 +152,19 @@ class XClient:
         if r.status_code >= 300 and r.status_code != 404:
             _fail(r, "delete")
 
+    # ---- subscription status ---------------------------------------------------
+
+    def subscription_type(self) -> str | None:
+        """The posting account's X Premium tier ("Basic", "Premium", "PremiumPlus"),
+        or None if it has no paid subscription. Requires the `subscription_type`
+        user field, which only returns anything under user-context auth (which is
+        what this client already uses)."""
+        r = requests.get(f"{API}/2/users/me", auth=self._auth(), timeout=30,
+                         params={"user.fields": "subscription_type"})
+        if r.status_code >= 300:
+            _fail(r, "users/me")
+        return r.json()["data"].get("subscription_type")
+
 
 TEST_POST_TEXT = "dailypost self-test (ignore) — deleting this in a second."
 
@@ -191,7 +204,9 @@ def main(argv=None) -> int:
         if r.status_code >= 300:
             _fail(r, "users/me")
         me = r.json()["data"]
+        sub = client.subscription_type()
         print(f"authenticated as @{me['username']} ({me['id']})")
+        print(f"subscription: {sub or 'none (free tier, 280-char limit applies)'}")
         return 0
 
     if args.test_post:

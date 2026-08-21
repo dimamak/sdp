@@ -97,8 +97,12 @@ Failing or skipping this step never touches the LinkedIn post already made.
 - The X API Free tier caps writes at roughly 500 posts/month per App — plenty
   for one post a day.
 - `x.max_chars` (default 280) is a soft guard the rewrite targets; X's own API
-  response is the real authority on length. Raise it only if the posting
-  account has X Premium/Premium+.
+  response is the real authority on length. Before each rewrite the bot checks
+  the posting account's own `subscription_type` via `GET /2/users/me` and, if
+  it has any paid X subscription, uses `x.premium_max_chars` (default 25000)
+  instead — per account, automatically, no config edit needed. Each person's
+  instance is checked independently, so on a shared server one person having
+  Premium doesn't raise another person's limit.
 - If the bot restarts between a LinkedIn publish and the X step starting, `/x`
   in Telegram recovers it.
 
