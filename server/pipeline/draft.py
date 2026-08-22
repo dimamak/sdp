@@ -205,15 +205,17 @@ def image_brief(cfg, day: str, session_id: str | None, post_text: str,
 
 
 X_REWRITE_PROMPT = """You wrote a LinkedIn post for {day} and it has already been
-published. Now write the X (Twitter) version of the SAME fact — a genuine rewrite
-for that platform's voice and length, not a truncation of the LinkedIn text.
+published. Now write the X (Twitter) version of the SAME fact — by default a genuine
+rewrite for that platform's voice and length, not a truncation of the LinkedIn text.
 
 The published LinkedIn post:
 \"\"\"
 {post_text}
 \"\"\"
 {extra}
-Rules:
+Rules below are defaults — if the note above explicitly asks for something these
+conflict with (e.g. reusing the LinkedIn text as-is, keeping detail these rules would
+otherwise cut, or going long now that there's room), follow the note instead:
 - Keep the same fact and hook — don't introduce anything the LinkedIn post didn't say.
 - Drop the "why it matters" elaboration and any mechanism detail; X readers want the
   fact and the stake, not the walkthrough.
