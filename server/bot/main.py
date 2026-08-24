@@ -39,6 +39,11 @@ log = get_logger("bot")
 
 X_PREMIUM_MAX_CHARS = 25000  # X's long-form post cap for Premium/Premium+ subscribers
 
+# Telegram clients split messages over ~4096 chars into several sends before they
+# even hit the bot; buffer fragments arriving this close together and process
+# them as one turn instead of firing a separate agent run per fragment.
+MESSAGE_DEBOUNCE_SECONDS = 1.5
+
 ANOTHER_STORY_MSG = ("Write a different angle on the post under discussion, or a post for "
                      "another fact from today if this one is exhausted. Say briefly what changed.")
 
@@ -158,6 +163,8 @@ class Bot:
         self.x = XClient(cfg)
         self.busy = asyncio.Lock()
         self.active_draft_id: int | None = None  # last draft you interacted with
+        self._pending_updates: list[Update] = []  # buffered fragments of a Telegram-split message
+        self._pending_task: asyncio.Task | None = None
 
     def allowed(self, update: Update) -> bool:
         chat = update.effective_chat
@@ -706,8 +713,28 @@ class Bot:
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.allowed(update) or not update.message or not update.message.text:
             return
-        text = update.message.text.strip()
+        self._pending_updates.append(update)
+        if self._pending_task is not None:
+            self._pending_task.cancel()
+        self._pending_task = asyncio.create_task(self._debounced_dispatch(context))
 
+    async def _debounced_dispatch(self, context: ContextTypes.DEFAULT_TYPE):
+        """Fires MESSAGE_DEBOUNCE_SECONDS after the last fragment in a burst; a
+        new fragment arriving before then cancels and restarts this wait."""
+        try:
+            await asyncio.sleep(MESSAGE_DEBOUNCE_SECONDS)
+        except asyncio.CancelledError:
+            return
+        updates, self._pending_updates = self._pending_updates, []
+        self._pending_task = None
+        text = "".join(u.message.text for u in updates).strip()
+        # a reply-to only lands on the fragment Telegram sent first
+        rep_update = next((u for u in updates if u.message.reply_to_message is not None),
+                          updates[-1])
+        await self._process_message(rep_update, context, text)
+
+    async def _process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+                               text: str):
         # explicit verbatim-replace mode for the LinkedIn draft (set by "Replace text")
         draft = self.store.latest_editing_draft()
         if draft is not None:
