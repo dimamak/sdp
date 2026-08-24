@@ -216,6 +216,30 @@ class Store:
         )
         self.db.commit()
 
+    def recent_hooks(self, before_day: str, limit: int = 10) -> list[str]:
+        """First line of one draft per day, most recent days first.
+
+        Prefers the day's posted draft, and keeps one line per day so a
+        prolific night can't fill the whole list with its own siblings.
+        """
+        rows = self.db.execute(
+            "SELECT day, text FROM drafts WHERE day < ? AND text <> ''"
+            " ORDER BY day DESC, (status='posted') DESC, id ASC",
+            (before_day,),
+        ).fetchall()
+        hooks, seen = [], set()
+        for r in rows:
+            if r["day"] in seen:
+                continue
+            lines = r["text"].strip().splitlines()
+            if not lines:
+                continue
+            seen.add(r["day"])
+            hooks.append(lines[0].strip())
+            if len(hooks) >= limit:
+                break
+        return hooks
+
     def latest_editing_draft(self) -> sqlite3.Row | None:
         return self.db.execute(
             "SELECT * FROM drafts WHERE status='editing' ORDER BY id DESC LIMIT 1"

@@ -23,6 +23,12 @@ Interesting means at least one of:
 - a belief I held confidently that turned out to be wrong
 - a pattern that generalises well beyond my particular stack
 
+Surprising is not the same as broken, and it is not the same as impressive.
+Don't default to framing the finding as a bug, a failure, or a mistake — and
+don't default to framing it as a win or a result that exceeded expectations
+either. State what turned out to be true, plainly, and let the reader form
+their own read on whether it's good news, bad news, or neither.
+
 **The reader does not care how I found it.** They care what's true and what it
 means for them. Deliver the finding, not the investigation.
 
@@ -45,15 +51,17 @@ means for them. Deliver the finding, not the investigation.
 
 ## Structure
 - **HOOK** — **first line under ~50 characters (5–10 words).** LinkedIn shows
-  ~210 chars before "see more", but that is the truncation limit, not a target:
-  first lines that actually use 140+ chars are the worst-performing in our data.
-  The surprising fact, claim, or stake. NEVER open with setup, stack, tooling, or
-  "We were doing X when…". No tool name in the first line. Don't spoil the payoff,
-  and don't promise one ("Here's how…").
-  When the fact came from something that went wrong, open on the wrong thing,
-  in the first person, with the stakes attached ("that mistake nearly cost us
-  the migration window"), rather than a neutral statement of the finding. Posts
-  that open on personal exposure outperform by roughly 2x.
+  ~210 chars before "see more", but that is the truncation limit rather than a
+  target. First lines that actually use 140+ chars are the worst-performing in
+  our data. Put the surprising fact, claim, or stake there. NEVER open with
+  setup, stack, tooling, or "We were doing X when…". No tool name in the first
+  line. Don't spoil the payoff, and don't promise one ("Here's how…").
+  If the fact genuinely came out of something going wrong, open on the wrong
+  thing, in the first person, with the stakes attached ("that mistake nearly
+  cost us the migration window") instead of a sanitized statement of the
+  finding. Hooks that open on personal exposure outperform by roughly 2x.
+  This does not override the no-spin rule above: if the day's fact wasn't a
+  failure, don't dress it up as one to get the hook.
 - **The finding**: what turned out to be true, with the one number or detail that
   proves it.
 - **Why it matters**: what a reader can take from it beyond my specific case.

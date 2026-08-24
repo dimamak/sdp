@@ -416,8 +416,11 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
     """
     style = _prompt_file(cfg, "style_guide", "style-guide.md").read_text(encoding="utf-8")
     task = _prompt_file(cfg, "draft_prompt", "draft-prompt.md").read_text(encoding="utf-8")
+    hooks = store.recent_hooks(day, limit=int(cfg.get("pipeline.recent_hooks", 10)))
     task = (task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
-                .replace("{MAX_DRAFTS}", str(cfg.get("pipeline.max_drafts", 4))))
+                .replace("{MAX_DRAFTS}", str(cfg.get("pipeline.max_drafts", 4)))
+                .replace("{RECENT_HOOKS}",
+                         "\n".join(f"- {h}" for h in hooks) if hooks else "(none yet)"))
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
     # Rarely, the model appends a trailing thinking-only turn after already

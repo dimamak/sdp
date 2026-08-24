@@ -7,13 +7,16 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
 1. Scan the digest and list candidate FACTS — things that turned out to be true, not tasks that were completed. Hunt specifically for:
    - **A number that surprises**: a cost, ratio, or measurement nobody would have guessed.
    - **A wrong assumption**: something confidently believed that the day disproved.
-   - **A hidden cause**: the real reason behind a problem, where the obvious reason was wrong.
+   - **A hidden cause**: the real reason behind an outcome, where the obvious explanation turns out to be wrong.
    - **A counterintuitive tradeoff**: the cheap option that cost more, the fast path that was slower.
    - **A pattern with reach**: something true beyond this stack, product, or company.
    - **A human moment**: a decision, disagreement, or judgment call worth reflecting on.
 
    Write each candidate as a single declarative sentence stating the fact itself.
    If a candidate can only be written as "I fixed/built/shipped X", discard it — that's a task, not a fact.
+
+   Report the fact neutrally: not spun as a bug fixed or a failure averted, and not spun as
+   a win or a result that beat expectations. State what's true and let it stand on its own.
 
 2. Score each candidate against three gates. It must pass ALL of them:
    - **In-lane**: fits one of the topic lanes in the style guide.
@@ -28,10 +31,26 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
    {MAX_DRAFTS} of them. Don't merge two facts into one post, and don't pad the list with
    candidates that failed a gate — three strong posts beat six weak ones.
 
-   For each one, privately draft 3 different hooks that each state the fact a different
-   way (the number / the wrong assumption / the stake). **No hook may contain a tool name,
-   a version, or any setup clause, and each must be under ~50 characters.** Prefer the
-   hook carrying a number or personal stakes. Keep the strongest, discard the rest.
+   For each one, privately draft 3 hooks, each using a DIFFERENT move from this list.
+   A move is only available when the day's material genuinely supports it. If it
+   doesn't, use another move rather than stretching the facts to fit one.
+
+   1. **The number that's off.** A cost, ratio, or measurement far from what anyone
+      would guess.
+   2. **The belief I was wrong about.** First person, stated as the belief itself,
+      not as the correction.
+   3. **The old way is finished.** Only if the day actually retired something that
+      used to be standard practice.
+   4. **First time I've seen this.** Only if it genuinely is the first — never
+      "rarely" dressed up as "never".
+   5. **The thing everyone tolerates and shouldn't.** Aim at the practice, never at
+      a named company or person.
+   6. **The finding, stated flat.** No stance, just the surprising fact.
+
+   **No hook may contain a tool name, a version, or any setup clause, and each must be
+   under ~50 characters.** Keep the strongest one and discard the rest. Prefer the hook
+   carrying a number or personal stakes, and prefer a move that does not repeat the
+   recently-used hooks listed below.
 
 4. Write each post in {LANGUAGE_OUT}, obeying every rule in the style guide:
    - Lead with the hook. Then the finding, then why it matters.
@@ -72,6 +91,15 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
    c. **Read it aloud in your head.** Any clause you would not say to a colleague
       over coffee gets rewritten or cut. Then confirm the post is still within
       1,100–1,600 characters, and trim only if the rewrite pushed it over.
+
+# Recently used hooks
+
+These opened my last posts, newest first. Each night's draft is written without
+memory of the one before, so this list is the only thing stopping the feed from
+reading as one repeated formula. Don't reuse a move that appears here unless the
+day leaves no honest alternative.
+
+{RECENT_HOOKS}
 
 # Output
 

@@ -25,6 +25,9 @@ pipeline:
   wait_deadline_hour: 12              # local hour after which we draft regardless,
                                       # so a laptop left off all week still posts
   max_drafts: 4                       # how many stories to draft per day (one message each)
+  recent_hooks: 10                    # past opening lines shown to the drafter so it doesn't
+                                      # reuse the same hook move night after night (one per
+                                      # day, preferring that day's posted draft)
   model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
   claude_bin: claude                  # path to the claude CLI
   language_out: English               # language of the LinkedIn post
