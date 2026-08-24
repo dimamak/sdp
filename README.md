@@ -12,7 +12,7 @@ Never auto-publishes.
 Once a LinkedIn post actually publishes, it can optionally also go to X
 (Twitter): the same day's Claude session writes a separate, shorter X-native
 rewrite (not a truncation — X's limit is 280 chars against LinkedIn's
-600–1,200), and that gets its own **Post to X / Rewrite / Replace text / Skip X**
+1,100–1,600), and that gets its own **Post to X / Rewrite / Replace text / Skip X**
 buttons. Nothing reaches X until that second tap either, and nothing in that
 step can affect the LinkedIn post already made. See [Also post to X](#also-post-to-x).
 
@@ -75,7 +75,7 @@ Set it up with `.venv/bin/python -m setup.wizard --source image`.
 
 Turned on with `x.enabled: true`. Once a draft actually publishes to LinkedIn —
 not before — the same day's Claude session writes a separate X-native rewrite of
-the same fact (the LinkedIn style guide targets 600–1,200 characters; X's default
+the same fact (the LinkedIn style guide targets 1,100–1,600 characters; X's default
 cap is 280, so this is a genuine rewrite, not a truncation). It arrives in
 Telegram with its own **Post to X · Rewrite · Replace text · Skip X** buttons,
 reusing the same illustration if one was posted with the LinkedIn version.

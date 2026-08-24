@@ -30,7 +30,8 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
 
    For each one, privately draft 3 different hooks that each state the fact a different
    way (the number / the wrong assumption / the stake). **No hook may contain a tool name,
-   a version, or any setup clause.** Keep the strongest, discard the rest.
+   a version, or any setup clause, and each must be under ~50 characters.** Prefer the
+   hook carrying a number or personal stakes. Keep the strongest, discard the rest.
 
 4. Write each post in {LANGUAGE_OUT}, obeying every rule in the style guide:
    - Lead with the hook. Then the finding, then why it matters.
@@ -39,7 +40,7 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
    - Decide whether this post should end with a genuine invitation to the reader
      (how they'd approach it, what they've seen). Do that for roughly one post in three,
      and only when the question is real.
-   - Target 600–1,200 characters.
+   - Target 1,100–1,600 characters. Never pad to reach it.
 
 5. Self-check and fix each post:
    - Does line 1 work as the entire post if nobody clicks "see more"?
@@ -61,14 +62,16 @@ Your job is to find the day's most **interesting fact**, not to summarize the da
       English — deleting the phrase alone leaves the machine rhythm behind:
       - "It's not X, it's Y" and every sibling contrast construction
       - more than one em dash in the post (rewrite as two sentences or a comma)
-      - "Here's how/what/why", tidy rule-of-three lists, symmetrical clause pairs
+      - "Here's how/what/why", rhetorical triads inside a sentence, symmetrical
+        clause pairs (this does NOT ban enumerated lists of real, specific items)
       - "thrilled", "humbled", "unlock", "elevate", "delve", "game-changer"
       - every sentence that could have been written about any company by anyone
-      - uniform sentence length; real speech varies short and long
+      - sentences that run long; keep the average under 12 words. (Varying
+        sentence length is not itself the win — shortness is.)
 
    c. **Read it aloud in your head.** Any clause you would not say to a colleague
       over coffee gets rewritten or cut. Then confirm the post is still within
-      600–1,200 characters, and trim if the rewrite pushed it over.
+      1,100–1,600 characters, and trim only if the rewrite pushed it over.
 
 # Output
 

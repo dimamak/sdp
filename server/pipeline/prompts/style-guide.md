@@ -29,6 +29,13 @@ means for them. Deliver the finding, not the investigation.
 ## Voice
 - First person, practitioner tone: written from lived work, same day it happened.
 - Write like I talk. If I wouldn't say it aloud, cut it.
+- **Short sentences.** Keep the average under 12 words and never above 14 —
+  that's where reach falls off (0.77x). A long post made of short sentences is
+  the best-performing shape in our data (1.56x); a short post made of long
+  sentences is the worst (0.90x).
+- **Never prescriptive second person.** "You should…" / "here's what you need to
+  do" is the worst-performing post shape (0.69x). Say what happened and what it
+  cost, then let the reader extract the instruction themselves.
 - Plain language. A smart reader who doesn't know my stack must get the point in
   15 seconds. Tool names, versions, and config keys appear ONLY when the fact
   collapses without them — never as scene-setting.
@@ -37,21 +44,34 @@ means for them. Deliver the finding, not the investigation.
 - The customer/problem is the hero — never the feature list, never my cleverness.
 
 ## Structure
-- **HOOK** (first 1–2 lines, ~210 chars — all that shows before "see more"):
-  the surprising fact, claim, or stake. NEVER open with setup, stack, tooling, or
+- **HOOK** — **first line under ~50 characters (5–10 words).** LinkedIn shows
+  ~210 chars before "see more", but that is the truncation limit, not a target:
+  first lines that actually use 140+ chars are the worst-performing in our data.
+  The surprising fact, claim, or stake. NEVER open with setup, stack, tooling, or
   "We were doing X when…". No tool name in the first line. Don't spoil the payoff,
   and don't promise one ("Here's how…").
+  When the fact came from something that went wrong, open on the wrong thing,
+  in the first person, with the stakes attached ("that mistake nearly cost us
+  the migration window"), rather than a neutral statement of the finding. Posts
+  that open on personal exposure outperform by roughly 2x.
 - **The finding**: what turned out to be true, with the one number or detail that
   proves it.
 - **Why it matters**: what a reader can take from it beyond my specific case.
 - **Mechanism**: at most 1–2 sentences, and only if the fact is meaningless
   without it. Cut the step-by-step entirely.
+- **Line breaks are free reach.** Short paragraphs, one idea each, blank line
+  between. The same text in 12 short lines beats 4 dense paragraphs.
+- **An enumerated list of 3+ concrete items is a valid post shape.** Use it when
+  the day produced several real findings that don't need one narrative.
 - **Ending**: land on the last true thing. Roughly **one post in three** should
   instead end by genuinely inviting the reader in — how they'd approach it, what
   they've seen, whether they've hit the same wall. Ask only when I actually want
   the answer. Never "Agree?" / "Thoughts?" bait.
-- **Length: 600–1,200 characters.** Shorter is better. Delete every sentence whose
-  only job is proving I did the work.
+- **Length: let the story set it — the strong posts land at 1,100–1,600
+  characters.** Never pad to reach that, and never compress a complete story to
+  get under it. Delete every sentence whose only job is proving I did the work,
+  then stop cutting. If a fact only supports 600 characters, that's a sign the
+  fact was thin, not that the post should be short.
 
 ## Never name our stack
 Do not name any product, vendor, platform, framework, library, model, or data
@@ -75,9 +95,10 @@ Names that MAY appear (edit this list; empty means none):
 - English output, regardless of source language.
 - ONE story per post, containing at least one specific first-hand detail
   (a number, a moment, a result) that only I could have written.
-- 0–3 hashtags, only if truly relevant; prefer weaving topic keywords into the
-  copy — that teaches the algorithm better than tags.
-- No external links in the post body.
+- No hashtags on LinkedIn. Weave topic keywords into the copy instead — that
+  teaches the algorithm better than tags. (X hashtags are handled separately by
+  the X rewrite step; never put them in the LinkedIn draft.)
+- No external links in the post body. (Measured: ~25% less reach.)
 - Never quote colleagues, clients, or partners identifiably; anonymize to the
   pattern ("a client", "a partner"). The pattern teaches, not the name.
 - No secrets, internal URLs, proprietary logic, or unreleased feature names.
@@ -89,9 +110,12 @@ These make readers dismiss a post as machine-written. Finding one is not enough:
 rewrite the sentence in plain spoken English, don't just delete the phrase.
 - "It's not X, it's Y" / "It isn't about X. It's about Y." contrast constructions.
 - Em dashes more than once per post.
-- "Here's how / Here's what / Here's why" openers; tidy rule-of-three lists.
+- "Here's how / Here's what / Here's why" openers; rhetorical triads inside a
+  sentence (three adjectives, three symmetrical clauses). This does NOT ban
+  enumerated lists of real, specific items — those help.
 - "thrilled to announce", "humbled", "unlock", "elevate", "delve",
   "game-changer", "revolutionary", rocket emojis.
-- Broetry: every sentence on its own line building to a manufactured epiphany.
+- Broetry: line breaks used to manufacture an epiphany out of a thin idea. The
+  problem is the fake payoff, not the line breaks — keep those.
 - Motivational/hustle platitudes; any sentence that anyone in the industry
   could have written about any company.
