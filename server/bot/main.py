@@ -116,10 +116,20 @@ def reddit_submit_link(subreddit: str, title: str, body: str, max_chars: int = 4
     If the full URL would exceed max_chars, the body is dropped from the link
     (title-only prefill); the body always still ships in its own copy-block
     message regardless, so nothing is silently lost, only the prefill.
+
+    Tapping this from Telegram hands off to the Reddit app (universal link),
+    whose deep-link handler decodes the URL an extra time before Reddit's own
+    composer sees it — so a single %0A arrives as a raw, invalid newline and
+    gets dropped, flattening paragraphs. A real browser only decodes once, so
+    it isn't affected. Doubly-encoding just the newlines (%250A, which still
+    single-decodes correctly to %0A in a browser) survives the app's extra
+    decode either way; every other character only needs one, harmless either
+    way, so it's left alone.
     """
     base = f"https://www.reddit.com/r/{subreddit}/submit?selftext=true"
     title_q = f"&title={quote(title)}" if title else ""
-    full = f"{base}{title_q}&text={quote(body)}"
+    body_q = quote(body).replace("%0A", "%250A")
+    full = f"{base}{title_q}&text={body_q}"
     if len(full) <= max_chars:
         return full, True
     return f"{base}{title_q}", False
