@@ -137,10 +137,18 @@ You know the story behind this post, not just its words — brief a concrete,
 literal scene: the real subject, setting and action behind the post, not an
 abstract metaphor or symbolic stand-in. Rules for the prompt you write:
 - Describe a scene or composition, concretely. No slide layouts, no infographics.
+- Derive the scene entirely from what's specific to *this* story — the actual
+  object, place, tool or moment it turns on. Don't default to a generic "person
+  at a laptop/desk" scene out of habit; reach for it only when that literally is
+  the most distinctive part of today's story, and vary the framing, time of day
+  and setting rather than repeating the same composition draft after draft.
 - No text, letters, numbers or watermarks anywhere in the image; image models
-  render them badly and LinkedIn readers notice. Exception: if the post names a
-  specific company, show that company's real logo or brand mark somewhere in the
-  scene (screen, sign, product, packaging...) — render it as accurately as you can.
+  render them badly and LinkedIn readers notice. Two exceptions: (1) if the post
+  names a specific company, show that company's real logo or brand mark somewhere
+  in the scene (screen, sign, product, packaging...), rendered as accurately as
+  you can; (2) if the feedback below explicitly asks for specific words to appear
+  in the image, include that exact text as a short, bold caption — feedback wins
+  over this rule.
 - No recognisable real people.
 - The composition must fill the whole frame, edge to edge. Never ask for a
   cinematic, widescreen, anamorphic or film-still look: the model answers those
@@ -164,7 +172,9 @@ The user's feedback on the image it produced:
 \"\"\"
 {feedback}
 \"\"\"
-Revise that prompt to address the feedback. Keep everything they didn't complain about.
+Revise that prompt to address the feedback precisely — if the feedback conflicts
+with a rule above (e.g. it asks for specific words in the image), the feedback
+wins. Keep everything they didn't complain about.
 """
 
 
