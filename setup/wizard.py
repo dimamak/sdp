@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -199,62 +200,138 @@ def upsert_source(data: dict, src: dict) -> None:
 
 def step_base(data: dict) -> None:
     print("\n== Base ==")
-    # Every instance needs its OWN store: a shared dailypost.db would mix two
-    # people's items and drafts together.
-    suffix = f"/{INSTANCE}" if INSTANCE else ""
-    data["install_root"] = ask("install root", data.get("install_root") or f"/opt/dailypost{suffix}")
-    root = data["install_root"]
-    if INSTANCE and not root.rstrip("/").endswith(f"/{INSTANCE}"):
-        warn(f"install root does not include the instance name — make sure it is not "
-             f"shared with another instance")
-    data["store_dir"] = ask("store dir", data.get("store_dir") or f"{root}/data")
-    data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir") or f"{root}/ingest")
-    data["logs_dir"] = ask("logs dir", data.get("logs_dir") or f"{root}/logs")
-    # Never default to root: this user owns the store, the credentials and the bot
-    # process. On a server that already has an instance, reuse that user — it is
-    # the one holding the Claude credentials the drafting step needs.
-    default_user = data.get("run_as_user")
-    if not default_user and (REPO / "config.yaml").exists():
-        try:
-            default_user = (yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8"))
-                            or {}).get("run_as_user")
-        except Exception:
-            default_user = None
-    default_user = default_user or os.environ.get("SUDO_USER") or os.environ.get("USER", "")
-    if default_user in ("", "root"):
-        default_user = "dailypost"
-    data["run_as_user"] = ask("run-as user (non-root; owns the store and runs the bot)",
-                              default_user)
-    if data["run_as_user"] == "root":
-        warn("running as root is not recommended — the store holds transcripts and tokens")
+    laptop = data.get("mode") == "laptop"
+    if laptop:
+        # No /opt, no run-as user, no chown: this machine has one person and
+        # one instance, and the wizard runs as that person already.
+        default_root = str(Path.home() / ".dailypost")
+        data["store_dir"] = ask("store dir", data.get("store_dir") or f"{default_root}/data")
+        data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir") or f"{default_root}/ingest")
+        data["logs_dir"] = ask("logs dir", data.get("logs_dir") or f"{default_root}/logs")
+        data.pop("install_root", None)
+        data.pop("run_as_user", None)
+    else:
+        # Every instance needs its OWN store: a shared dailypost.db would mix two
+        # people's items and drafts together.
+        suffix = f"/{INSTANCE}" if INSTANCE else ""
+        data["install_root"] = ask("install root", data.get("install_root") or f"/opt/dailypost{suffix}")
+        root = data["install_root"]
+        if INSTANCE and not root.rstrip("/").endswith(f"/{INSTANCE}"):
+            warn(f"install root does not include the instance name — make sure it is not "
+                 f"shared with another instance")
+        data["store_dir"] = ask("store dir", data.get("store_dir") or f"{root}/data")
+        data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir") or f"{root}/ingest")
+        data["logs_dir"] = ask("logs dir", data.get("logs_dir") or f"{root}/logs")
+        # Never default to root: this user owns the store, the credentials and the bot
+        # process. On a server that already has an instance, reuse that user — it is
+        # the one holding the Claude credentials the drafting step needs.
+        default_user = data.get("run_as_user")
+        if not default_user and (REPO / "config.yaml").exists():
+            try:
+                default_user = (yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8"))
+                                or {}).get("run_as_user")
+            except Exception:
+                default_user = None
+        default_user = default_user or os.environ.get("SUDO_USER") or os.environ.get("USER", "")
+        if default_user in ("", "root"):
+            default_user = "dailypost"
+        data["run_as_user"] = ask("run-as user (non-root; owns the store and runs the bot)",
+                                  default_user)
+        if data["run_as_user"] == "root":
+            warn("running as root is not recommended — the store holds transcripts and tokens")
     pl = data.setdefault("pipeline", {})
     pl["timezone"] = ask("timezone", pl.get("timezone", "UTC"))
-    pl["cron_utc"] = ask("nightly cron (UTC, crontab syntax)", pl.get("cron_utc", "30 0 * * *"))
+    if laptop:
+        pl["schedule_time"] = ask(
+            "nightly draft time (local HH:MM — the in-process scheduler catches up "
+            "on wake if the machine was asleep at this time)",
+            pl.get("schedule_time", "23:30"))
+    else:
+        pl["cron_utc"] = ask("nightly cron (UTC, crontab syntax)", pl.get("cron_utc", "30 0 * * *"))
     tags = ask("hashtags to always include on X posts, comma-separated, no '#' (blank = none)",
               ",".join(pl.get("always_hashtags", [])))
     pl["always_hashtags"] = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
-    dirs = [data["store_dir"], f"{data['ingest_dir']}/laptop", data["logs_dir"]]
+    dirs = [data["store_dir"], data["logs_dir"]]
+    dirs.append(data["ingest_dir"] if laptop else f"{data['ingest_dir']}/laptop")
     for d in dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
-    # created as root when the wizard needs root for systemd; hand them to the
-    # user that actually runs the pipeline, or nothing can write the store
-    fix_owner(data, *dirs, data["install_root"], CONFIG, ENV)
-    ok(f"directories created (owner: {data['run_as_user']})")
+    if laptop:
+        ok("directories created")
+    else:
+        # created as root when the wizard needs root for systemd; hand them to the
+        # user that actually runs the pipeline, or nothing can write the store
+        fix_owner(data, *dirs, data["install_root"], CONFIG, ENV)
+        ok(f"directories created (owner: {data['run_as_user']})")
     venv = REPO / ".venv"
     if not venv.exists():
         print("  creating venv + installing requirements...")
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-        subprocess.run([str(venv / "bin" / "pip"), "install", "-q", "-r", str(REPO / "requirements.txt")], check=True)
+        pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
+        subprocess.run([str(pip), "install", "-q", "-r", str(REPO / "requirements.txt")], check=True)
     ok("venv ready")
+
+
+def step_llm(data: dict) -> None:
+    """Which CLI writes the posts. Detects what's on PATH, and — like the
+    doctor's "verify claude auth with a real request" check — verifies with an
+    actual call rather than trusting `--version` or `auth status`, both of
+    which pass on a revoked token."""
+    print("\n== Which model writes your posts? ==")
+    pl = data.setdefault("pipeline", {})
+    have_claude = shutil.which(str(pl.get("claude_bin", "claude"))) is not None
+    have_codex = shutil.which(str(pl.get("codex_bin", "codex"))) is not None
+    if have_claude and have_codex:
+        raw = ask("both Claude Code and Codex CLI were found on PATH — which should "
+                 "write posts? (claude|codex)", pl.get("backend", "claude"))
+    elif have_codex:
+        ok("Codex CLI found on PATH (Claude Code CLI not found) — using Codex")
+        raw = "codex"
+    elif have_claude:
+        raw = "claude"
+    else:
+        raw = ask("neither CLI was found on PATH — which will you install? (claude|codex)", "claude")
+        warn(f"install the {raw} CLI and log in before running the pipeline")
+    choice = "codex" if raw.strip().lower().startswith("co") else "claude"
+    pl["backend"] = choice
+
+    if choice == "codex":
+        pl["codex_bin"] = ask("codex binary", pl.get("codex_bin", "codex"))
+    else:
+        pl["claude_bin"] = ask("claude binary", pl.get("claude_bin", "claude"))
+
+    if not yes(f"verify {choice} auth now with a real request?", True):
+        return
+    save_data(data)  # the check below loads config.yaml, same as step_linkedin's OAuth call does
+    from server.config import Config
+    cfg = Config.load(CONFIG)
+    try:
+        if choice == "codex":
+            from server.pipeline.codex_cli import run_codex
+            out, _ = run_codex(cfg, "Reply with exactly: OK", timeout=120)
+        else:
+            from server.pipeline.claude_cli import run_claude
+            out = run_claude(cfg, "Reply with exactly: OK", timeout=120)
+        if "OK" not in out:
+            raise RuntimeError(f"unexpected reply: {out[:120]!r}")
+        ok(f"{choice} authenticated (test prompt answered)")
+    except Exception as e:
+        bad(f"{choice} check failed: {e} — fix auth, then re-run: "
+            f"python -m setup.wizard --source llm")
 
 
 def step_claude(data: dict) -> None:
     print("\n== Claude Code sessions ==")
-    if yes("harvest a plain per-user projects dir on THIS machine?", False):
+    laptop = data.get("mode") == "laptop"
+    if yes("harvest a plain per-user projects dir on THIS machine?", laptop):
         d = ask("projects dir", "~/.claude/projects")
         upsert_source(data, {"type": "claude_projects_dir", "enabled": True,
                              "name": "claude-server-cli", "projects_dir": d})
-    if yes("harvest sessions from a shared/multi-user host DB (filtered to you)?", False):
+    if yes("harvest Codex CLI / ChatGPT desktop sessions on THIS machine?", laptop):
+        codex_default = str(Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser())
+        d = ask("Codex home dir (holds sessions/ and archived_sessions/)", codex_default)
+        upsert_source(data, {"type": "codex_sessions", "enabled": True,
+                             "name": "codex", "codex_home": d})
+    if not laptop and yes("harvest sessions from a shared/multi-user host DB (filtered to you)?", False):
         projects_dir = ask("projects dir holding the JSONL files")
         strategy = ask("filter strategy (all|sql|command|id_file)", "sql")
         fcfg: dict = {"strategy": strategy}
@@ -288,10 +365,20 @@ def step_claude(data: dict) -> None:
             fcfg["path"] = ask("path to id file")
         upsert_source(data, {"type": "claude_sessions", "enabled": True, "name": "claude-ide",
                              "projects_dir": projects_dir, "filter": fcfg})
-    # laptop ingest is on by default
-    upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "laptop",
-                         "path": f"{data['ingest_dir']}/laptop"})
-    print("  Laptop side: clone the repo on the laptop and run setup\\wizard_laptop.ps1")
+    if laptop:
+        if yes("enable screenshot capture via a local drop folder?", True):
+            shots_dir = f"{data['ingest_dir']}/screenshots"
+            Path(shots_dir).mkdir(parents=True, exist_ok=True)
+            upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "screenshots",
+                                 "path": shots_dir})
+            print(f"  Point your OS screenshot tool's save location at:\n    {shots_dir}")
+            print("  (files dropped there are moved into the store and removed from this "
+                  "folder — it's a spool, not your permanent screenshot library)")
+    else:
+        # laptop ingest is on by default
+        upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "laptop",
+                             "path": f"{data['ingest_dir']}/laptop"})
+        print("  Laptop side: clone the repo on the laptop and run setup\\wizard_laptop.ps1")
 
 
 def step_telegram(data: dict) -> None:
@@ -679,6 +766,9 @@ def step_reddit(data: dict) -> None:
     print("  This does NOT post to Reddit for you — once the X step resolves you get")
     print("  a prefilled submit link and a copy block in Telegram, and you tap Submit")
     print("  yourself in your browser. No credentials, no auth flow, no API calls.")
+    if not yes("enable Reddit draft-assist?", data.get("reddit", {}).get("enabled", False)):
+        data.setdefault("reddit", {})["enabled"] = False
+        return
     sub = ask("subreddit to post to (without r/)",
              str(data.get("reddit", {}).get("subreddit", "") or "buildinpublic"))
     sub = sub.strip().removeprefix("r/").removeprefix("/r/").strip("/") or "buildinpublic"
@@ -866,23 +956,41 @@ def doctor() -> int:
         return 1
     from server.config import Config
     cfg = Config.load(CONFIG)
+    laptop = cfg.get("mode") == "laptop"
 
     check("store", lambda: (__import__('server.store', fromlist=['Store']).Store(cfg.path_of('store_dir')) and
                             f"writable at {cfg.path_of('store_dir')}"))
-    check("claude CLI", lambda: subprocess.run(
-        [str(cfg.get("pipeline.claude_bin", "claude")), "--version"],
-        capture_output=True, text=True, check=True).stdout.strip())
+    backend = str(cfg.get("pipeline.backend", "claude") or "claude")
+    if backend == "codex":
+        check("codex CLI", lambda: subprocess.run(
+            [str(cfg.get("pipeline.codex_bin", "codex")), "--version"],
+            capture_output=True, text=True, check=True).stdout.strip())
 
-    def _claude_auth():
-        """Actually call the model. `--version` passes on a revoked token, and so
-        does `auth status` — it reports the local credentials file, not whether
-        the server still honours it. Only a real request tells the truth."""
-        from server.pipeline.claude_cli import run_claude
-        out = run_claude(cfg, "Reply with exactly: OK", timeout=120)
-        if "OK" not in out:
-            raise RuntimeError(f"unexpected reply: {out[:120]!r}")
-        return "authenticated (test prompt answered)"
-    check("claude auth", _claude_auth)
+        def _codex_auth():
+            """Actually call the model — `--version` says nothing about whether
+            `codex login` is still valid, and subscription auth expires on a
+            rolling window."""
+            from server.pipeline.codex_cli import run_codex
+            out, _ = run_codex(cfg, "Reply with exactly: OK", timeout=120)
+            if "OK" not in out:
+                raise RuntimeError(f"unexpected reply: {out[:120]!r}")
+            return "authenticated (test prompt answered)"
+        check("codex auth", _codex_auth)
+    else:
+        check("claude CLI", lambda: subprocess.run(
+            [str(cfg.get("pipeline.claude_bin", "claude")), "--version"],
+            capture_output=True, text=True, check=True).stdout.strip())
+
+        def _claude_auth():
+            """Actually call the model. `--version` passes on a revoked token, and so
+            does `auth status` — it reports the local credentials file, not whether
+            the server still honours it. Only a real request tells the truth."""
+            from server.pipeline.claude_cli import run_claude
+            out = run_claude(cfg, "Reply with exactly: OK", timeout=120)
+            if "OK" not in out:
+                raise RuntimeError(f"unexpected reply: {out[:120]!r}")
+            return "authenticated (test prompt answered)"
+        check("claude auth", _claude_auth)
 
     def _store_isolation():
         """Two instances sharing a store would write into one dailypost.db and
@@ -926,6 +1034,24 @@ def doctor() -> int:
                 ids = resolve_session_ids(s.get("filter"), "1970-01-01 00:00:00")
                 return f"filter matches {len(ids) if ids is not None else 'ALL'} sessions"
             check(name, _cs)
+        elif t == "codex_sessions":
+            def _cx(s=src):
+                from server.harvest.codex_sessions import codex_home
+                home = codex_home(s)
+                if not (home / "sessions").exists():
+                    raise RuntimeError(f"sessions dir missing: {home / 'sessions'}")
+                toml_path = home / "config.toml"
+                if toml_path.exists():
+                    try:
+                        txt = toml_path.read_text(encoding="utf-8")
+                    except OSError:
+                        txt = ""
+                    if re.search(r'history\s*\.\s*persistence\s*=\s*"none"', txt):
+                        raise RuntimeError(
+                            f'{toml_path}: history.persistence = "none" disables transcript '
+                            "writing — this source would stay permanently empty")
+                return f"sessions dir present at {home / 'sessions'}"
+            check(name, _cx)
         elif t == "ingest_dir":
             check(name, lambda s=src: "ok" if Path(s["path"]).exists()
                   else (_ for _ in ()).throw(RuntimeError("ingest dir missing")))
@@ -1037,60 +1163,68 @@ def doctor() -> int:
         return f"{model} reachable (quota untested)"
     check("gemini image", _gemini)
 
-    def _cron_window():
-        """The retry slots must all fall before local noon.
+    if laptop:
+        def _schedule():
+            from server.bot.scheduler import _parse_schedule
+            hour, minute = _parse_schedule(cfg)
+            return (f"drafts at {hour:02d}:{minute:02d} local — the bot process must stay "
+                    "running (python -m server.bot.main) for this to fire")
+        check("nightly schedule", _schedule)
+    else:
+        def _cron_window():
+            """The retry slots must all fall before local noon.
 
-        target_day() reports 'yesterday' only until 12:00 local; a slot at or
-        after that flips to today and drafts a SECOND set for a day already
-        posted. The deadline must also land inside the window, or a laptop that
-        never checks in is never drafted for at all."""
-        import re as _re
-        from zoneinfo import ZoneInfo
-        from datetime import datetime, timezone as _tz
-        sched = str(cfg.get("pipeline.cron_utc", ""))
-        m = _re.match(r"^(\d+)\s+([0-9,\-*/]+)", sched)
-        if not m:
-            return f"schedule {sched!r} not parsed — check it by hand"
-        minute, hours = int(m.group(1)), m.group(2)
-        last_utc = int(hours.split("-")[-1].split(",")[-1]) if hours != "*" else 23
-        tzname = str(cfg.get("pipeline.timezone", "UTC"))
-        off = datetime.now(_tz.utc).astimezone(ZoneInfo(tzname)).utcoffset().total_seconds() / 3600
-        last_local = (last_utc + off) % 24
-        deadline = int(cfg.get("pipeline.wait_deadline_hour", 12))
-        if last_local >= 12:
-            raise RuntimeError(
-                f"last cron slot is {int(last_local):02d}:{minute:02d} local — at or after "
-                "noon target_day() moves to today, so it drafts a second set for a "
-                "day already handled. End the range before local noon.")
-        if cfg.get("pipeline.wait_for_laptop", True) and deadline > last_local:
-            raise RuntimeError(
-                f"wait_deadline_hour {deadline} is after the last slot "
-                f"({int(last_local):02d}:{minute:02d} local) — a laptop that never checks "
-                "in would never be drafted for")
-        return f"slots end {int(last_local):02d}:{minute:02d} local, deadline {deadline}:00"
-    check("cron window", _cron_window)
+            target_day() reports 'yesterday' only until 12:00 local; a slot at or
+            after that flips to today and drafts a SECOND set for a day already
+            posted. The deadline must also land inside the window, or a laptop that
+            never checks in is never drafted for at all."""
+            import re as _re
+            from zoneinfo import ZoneInfo
+            from datetime import datetime, timezone as _tz
+            sched = str(cfg.get("pipeline.cron_utc", ""))
+            m = _re.match(r"^(\d+)\s+([0-9,\-*/]+)", sched)
+            if not m:
+                return f"schedule {sched!r} not parsed — check it by hand"
+            minute, hours = int(m.group(1)), m.group(2)
+            last_utc = int(hours.split("-")[-1].split(",")[-1]) if hours != "*" else 23
+            tzname = str(cfg.get("pipeline.timezone", "UTC"))
+            off = datetime.now(_tz.utc).astimezone(ZoneInfo(tzname)).utcoffset().total_seconds() / 3600
+            last_local = (last_utc + off) % 24
+            deadline = int(cfg.get("pipeline.wait_deadline_hour", 12))
+            if last_local >= 12:
+                raise RuntimeError(
+                    f"last cron slot is {int(last_local):02d}:{minute:02d} local — at or after "
+                    "noon target_day() moves to today, so it drafts a second set for a "
+                    "day already handled. End the range before local noon.")
+            if cfg.get("pipeline.wait_for_laptop", True) and deadline > last_local:
+                raise RuntimeError(
+                    f"wait_deadline_hour {deadline} is after the last slot "
+                    f"({int(last_local):02d}:{minute:02d} local) — a laptop that never checks "
+                    "in would never be drafted for")
+            return f"slots end {int(last_local):02d}:{minute:02d} local, deadline {deadline}:00"
+        check("cron window", _cron_window)
 
-    def _cron():
-        out = subprocess.run(crontab_cmd(cfg.data, "-l"), capture_output=True, text=True)
-        tag = f"dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
-        if tag not in out.stdout:
-            raise RuntimeError("nightly cron entry missing")
-        return "installed"
-    check("cron", _cron)
+        def _cron():
+            out = subprocess.run(crontab_cmd(cfg.data, "-l"), capture_output=True, text=True)
+            tag = f"dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
+            if tag not in out.stdout:
+                raise RuntimeError("nightly cron entry missing")
+            return "installed"
+        check("cron", _cron)
 
-    def _svc():
-        out = subprocess.run(["systemctl", "is-active", unit_name()], capture_output=True, text=True)
-        if out.stdout.strip() != "active":
-            raise RuntimeError(out.stdout.strip() or "not installed")
-        return "active"
-    check("bot service", _svc)
+        def _svc():
+            out = subprocess.run(["systemctl", "is-active", unit_name()], capture_output=True, text=True)
+            if out.stdout.strip() != "active":
+                raise RuntimeError(out.stdout.strip() or "not installed")
+            return "active"
+        check("bot service", _svc)
 
     print(f"\n{failures} problem(s)" if failures else f"\n{GREEN}all green{RESET}")
     return 1 if failures else 0
 
 
 STEPS = {
-    "base": step_base, "claude": step_claude, "telegram": step_telegram,
+    "base": step_base, "llm": step_llm, "claude": step_claude, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
     "pair": step_pair, "linkedin": step_linkedin, "x": step_x, "reddit": step_reddit,
     "image": step_image, "laptop": step_laptop, "cron": step_cron, "systemd": step_systemd,
@@ -1105,10 +1239,16 @@ def _done_base(data):
         return f"dirs + venv ready, store at {data['store_dir']}"
 
 
+def _done_llm(data):
+    backend = data.get("pipeline", {}).get("backend")
+    if backend:
+        return f"backend={backend}"
+
+
 def _done_claude(data):
     types = {s.get("type") for s in data.get("sources", []) if s.get("enabled")}
-    if types & {"claude_projects_dir", "claude_sessions"}:
-        return "claude source(s) configured"
+    if types & {"claude_projects_dir", "claude_sessions", "codex_sessions"}:
+        return "claude/codex source(s) configured"
 
 
 def _done_telegram(data):
@@ -1188,7 +1328,7 @@ def _done_laptop(data):
 
 
 DONE_PROBES = {
-    "base": _done_base, "claude": _done_claude, "telegram": _done_telegram,
+    "base": _done_base, "llm": _done_llm, "claude": _done_claude, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
     "pair": _done_pair, "linkedin": _done_linkedin, "x": _done_x, "reddit": _done_reddit,
     "image": _done_image, "laptop": _done_laptop, "cron": _done_cron, "systemd": _done_systemd,
@@ -1220,16 +1360,35 @@ def main(argv=None) -> int:
         return 0
 
     instance = args.instance
+    mode = None
     if instance is None and not args.doctor and not args.source:
-        # several people can share one server install — each gets their own
-        # config, store, bot, cron and WAHA container under instances/<name>/
+        # A laptop is single-person, single-instance by definition — never ask
+        # "who is this setup for?" in that case, and never offer server-only
+        # steps (cron, systemd, SSH pairing) below.
         print("=== dailypost setup wizard ===")
-        existing = sorted(p.name for p in (REPO / "instances").glob("*")
-                          if (p / "config.yaml").exists()) if (REPO / "instances").exists() else []
-        if existing:
-            print(f"existing instances: {', '.join(existing)}")
-        instance = ask("who is this setup for? (short name, e.g. alice; "
-                       "empty = this server's default instance)") or None
+        mode_default = "laptop"
+        try:
+            existing = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8")) or {}
+            # Configs written before `mode` existed have no field to read — infer
+            # server from the server-only fields they do have, rather than
+            # defaulting an existing install to laptop under it.
+            mode_default = existing.get("mode") or (
+                "server" if existing.get("run_as_user") or existing.get("install_root")
+                else "laptop")
+        except Exception:
+            pass
+        raw_mode = ask("mode — laptop (just you, no server, this machine only) "
+                      "or server (shared box, cron + systemd)", mode_default)
+        mode = "server" if raw_mode.strip().lower().startswith("s") else "laptop"
+        if mode == "server":
+            # several people can share one server install — each gets their own
+            # config, store, bot, cron and WAHA container under instances/<name>/
+            existing = sorted(p.name for p in (REPO / "instances").glob("*")
+                              if (p / "config.yaml").exists()) if (REPO / "instances").exists() else []
+            if existing:
+                print(f"existing instances: {', '.join(existing)}")
+            instance = ask("who is this setup for? (short name, e.g. alice; "
+                           "empty = this server's default instance)") or None
     use_instance(instance)
     if instance:
         print(f"instance: {instance}  ({CONFIG})")
@@ -1238,15 +1397,26 @@ def main(argv=None) -> int:
         return doctor()
 
     data = load_data()
+    if mode:
+        data["mode"] = mode
     if args.source:
         STEPS[args.source](data)
         save_data(data)
         return 0
 
+    laptop = data.get("mode") == "laptop"
+    if laptop:
+        order = ["base", "llm", "claude", "telegram", "bot", "gmail"]
+        if shutil.which("docker"):
+            order.append("whatsapp")
+        order += ["linkedin", "image", "x", "reddit"]
+    else:
+        order = ["base", "llm", "claude", "telegram", "bot", "gmail", "whatsapp", "pair",
+                 "linkedin", "laptop", "cron", "systemd"]
+
     print("(steps already completed are skipped — answer y to redo one)")
     failed = []
-    for name in ("base", "claude", "telegram", "bot", "gmail", "whatsapp", "pair",
-                 "linkedin", "laptop", "cron", "systemd"):
+    for name in order:
         done = None
         try:
             done = DONE_PROBES[name](data)
@@ -1272,17 +1442,25 @@ def main(argv=None) -> int:
         for f in failed:
             print(f"  retry: python -m setup.wizard{inst} --source {f}")
         print("")
-    print(f"Server setup {'finished with errors' if failed else 'complete'}"
+    kind = "Laptop" if laptop else "Server"
+    print(f"{kind} setup {'finished with errors' if failed else 'complete'}"
           f"{f' for {INSTANCE}' if INSTANCE else ''}.")
     print(f"  health check:    python -m setup.wizard{inst} --doctor")
-    if INSTANCE:
+    if laptop:
+        print("  manual run:      python -m server.pipeline.run_nightly --dry-run")
+        print("  start the bot:   python -m server.bot.main   (leave it running — it")
+        print("                   polls Telegram AND schedules the nightly draft)")
+    elif INSTANCE:
         print(f"  manual run:      DAILYPOST_CONFIG={CONFIG} server/run_nightly.sh --dry-run")
         print(f"  bot service:     systemctl status {unit_name()}")
+        print(f"\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
+        print(f"or re-print it any time with:")
+        print(f"  python -m setup.wizard{inst} --source laptop")
     else:
         print("  manual run:      server/run_nightly.sh --dry-run")
-    print(f"\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
-    print(f"or re-print it any time with:")
-    print(f"  python -m setup.wizard{inst} --source laptop")
+        print(f"\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
+        print(f"or re-print it any time with:")
+        print(f"  python -m setup.wizard{inst} --source laptop")
     print("=" * 60)
     return 0
 

@@ -1,6 +1,13 @@
 # dailypost — instance configuration (copy to config.yaml and edit; config.yaml is git-ignored)
 # All paths may use ~. Secrets go in .env, never here.
 
+# laptop: everything runs on this one machine, no server, no cron/systemd — the
+#         bot process schedules its own nightly run and catches up on wake.
+# server: shared box, provisioned with /opt paths + a run-as user, cron + systemd.
+# Set by the wizard's first question; the fields below (install_root, run_as_user,
+# cron_utc) only apply in server mode.
+mode: server
+
 install_root: /opt/dailypost          # server install root
 store_dir: /opt/dailypost/data        # SQLite store + files/
 ingest_dir: /opt/dailypost/ingest     # where the laptop push lands
@@ -8,7 +15,10 @@ logs_dir: /opt/dailypost/logs
 run_as_user: youruser                 # non-root user that owns everything and runs jobs
 
 pipeline:
-  timezone: Asia/Jerusalem            # day boundaries + "yesterday" logic
+  timezone: Etc/UTC                   # day boundaries + "yesterday" logic — set to your own,
+                                      # e.g. America/New_York, Europe/Berlin
+  schedule_time: "23:30"              # laptop mode only: local time the in-process
+                                      # scheduler drafts at (server mode uses cron_utc below)
   cron_utc: "30 0-9 * * *"            # server crontab, UTC. A RANGE of hours, not
                                       # one: attempts repeat until the laptop has
                                       # checked in, then stop (a drafted day is a
@@ -28,11 +38,27 @@ pipeline:
   recent_hooks: 10                    # past opening lines shown to the drafter so it doesn't
                                       # reuse the same hook move night after night (one per
                                       # day, preferring that day's posted draft)
-  model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
+  backend: claude                     # claude | codex — which CLI writes posts, briefs images,
+                                      # rewrites for X/Reddit, and (by default) condenses
+                                      # sessions. Set interactively by the wizard's "llm" step,
+                                      # which also verifies auth with a real call.
+  model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions).
+                                      # Ignored under backend: codex — Codex uses its own
+                                      # configured default model unless set here anyway.
   summary_model: claude-haiku-4-5     # model that condenses each raw session transcript into
                                       # its digest entry — cheap on purpose, runs once per
-                                      # harvested session (or growth) per night
+                                      # harvested session (or growth) per night. Defaults to
+                                      # claude-haiku-4-5 under backend: claude; under backend:
+                                      # codex, leave unset to use Codex's own default model.
   claude_bin: claude                  # path to the claude CLI
+  codex_bin: codex                    # path to the codex CLI (backend: codex only). Auth via
+                                      # `codex login` or CODEX_API_KEY/OPENAI_API_KEY in .env.
+                                      # Note: Codex's --sandbox read-only still lets the model
+                                      # read files under its working directory (there's no
+                                      # --allowedTools "" equivalent), and its per-call directory
+                                      # grant flag (--add-dir) grants write, not read — a real,
+                                      # documented gap from the Claude backend's tool sandboxing.
+                                      # See the README's privacy section.
   language_out: English               # language of the LinkedIn post
   always_hashtags: []                 # e.g. ["buildinpublic", "AICoding"] — no leading '#'.
                                       # Included verbatim in every X rewrite only (not the
@@ -66,7 +92,7 @@ sources:
   - type: claude_sessions
     enabled: false
     name: claude-ide
-    projects_dir: /home/ideuser/.claude/projects
+    projects_dir: /home/youruser/.claude/projects
     filter:
       strategy: sql
       db_path: /path/to/platform.db
@@ -77,6 +103,17 @@ sources:
       params:
         username: yourname
         since: $SINCE
+
+  # Codex CLI / ChatGPT desktop session transcripts (the ChatGPT desktop app
+  # merged into Codex on 2026-07-09; both write to the same local store, so
+  # this one adapter covers "I use Codex" and "I use ChatGPT" alike). Reads
+  # $CODEX_HOME/sessions/ + archived_sessions/ (default ~/.codex). Does NOT
+  # see Codex Cloud tasks or the plain ChatGPT web/desktop Chat tab — see the
+  # README's limitations section.
+  - type: codex_sessions
+    enabled: false
+    name: codex
+    # codex_home: ~/.codex              # override if $CODEX_HOME is non-default
 
   # Files pushed from the laptop (Claude JSONL, screenshots, audio) — see laptop/push_daily.sh.
   - type: ingest_dir
@@ -151,12 +188,14 @@ linkedin:
 # post that already succeeded. Keys go in .env: X_API_KEY, X_API_SECRET,
 # X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET (OAuth 1.0a — no token file, doesn't
 # expire on its own). Set up with: python -m setup.wizard --source x
-# The X API Free tier caps writes at ~500 posts/month per app — plenty for one
-# post a day, but relevant if you also run test posts against the same app.
+# X ended free API posting access — the X API is pay-per-use, prepaid credits
+# only, no free tier (docs.x.com/x-api/getting-started/pricing): about $0.015
+# per plain post, $0.20 per post containing a link. One post a day is well
+# under $1/month, but it is not $0 the way the LinkedIn step is.
 # ---------------------------------------------------------------------------
 x:
   enabled: false
-  max_chars: 280                       # Free-tier cap. Auto-raised per post to
+  max_chars: 280                       # Default cap. Auto-raised per post to
                                        # premium_max_chars if the connected account's
                                        # own X subscription_type comes back non-empty
                                        # (GET /2/users/me) — no manual edit needed.

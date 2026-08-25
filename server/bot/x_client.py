@@ -13,8 +13,8 @@ own; only a manual "revoke" in the portal kills them.
 Two ways to get the access token pair, same pattern as LinkedIn's shared-App
 setup (server/bot/linkedin_auth.py): the App owner can auto-generate one
 directly in the developer portal for their own account, for free; anyone
-else posting through the SAME App (a second person, like Anton alongside
-dima here) needs their own token for their own account, gotten via the
+else posting through the SAME App (a second person sharing the App owner's
+server instance) needs their own token for their own account, gotten via the
 PIN-based OAuth flow in server/bot/x_auth.py.
 
 POST /2/tweets accepts OAuth 1.0a user context, and the v1.1 media/upload

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import json
 import re
-import uuid
 from pathlib import Path
 
 import requests
 
-from .claude_cli import extract_json, run_claude
+from .claude_cli import extract_json
+from .llm import run_llm
 from ..util import get_logger
 
 log = get_logger("pipeline.draft")
@@ -63,7 +63,7 @@ def deai_cleanup(cfg, text: str) -> str:
     skill = _prompt_file(cfg, "deai_skill", "deai-skill.md").read_text(encoding="utf-8")
     prompt = DEAI_PROMPT.format(skill=skill, text=text)
     try:
-        result = run_claude(cfg, prompt, timeout=300)
+        result = run_llm(cfg, prompt, timeout=300).text
         data = extract_json(result)
     except Exception as e:
         log.warning("deai cleanup failed (%s) — keeping pre-cleanup text", e)
@@ -110,11 +110,11 @@ def converse(cfg, store, day: str, session_id: str, message: str,
     prompt = FOLLOW_UP_PROMPT.format(day=day, message=message, files_dir=files_dir)
     if current_post:
         prompt += f"\n\nThe post currently under discussion is:\n\"\"\"\n{current_post}\n\"\"\"\n"
-    result = run_claude(
-        cfg, prompt, session_id=session_id, resume=True, timeout=900,
+    result = run_llm(
+        cfg, prompt, session=session_id, timeout=900,
         allow_read_dirs=[str(files_dir)] if files_dir.exists() else None,
         allowed_tools="Read,Grep,Glob",
-    )
+    ).text
     try:
         data = extract_json(result)
     except ValueError:
@@ -224,12 +224,12 @@ def image_brief(cfg, day: str, session_id: str | None, post_text: str,
 
     if session_id:
         try:
-            result = run_claude(cfg, prompt, session_id=session_id, resume=True, timeout=300)
+            result = run_llm(cfg, prompt, session=session_id, timeout=300).text
         except Exception as e:
             log.warning("image brief: session %s unusable (%s) — falling back", session_id, e)
-            result = run_claude(cfg, prompt, timeout=300)
+            result = run_llm(cfg, prompt, timeout=300).text
     else:
-        result = run_claude(cfg, prompt, timeout=300)
+        result = run_llm(cfg, prompt, timeout=300).text
 
     data = extract_json(result)
     image_prompt = (data.get("image_prompt") or "").strip()
@@ -308,12 +308,12 @@ def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
     def _ask(p: str) -> str:
         if session_id:
             try:
-                result = run_claude(cfg, p, session_id=session_id, resume=True, timeout=300)
+                result = run_llm(cfg, p, session=session_id, timeout=300).text
             except Exception as e:
                 log.warning("x rewrite: session %s unusable (%s) — falling back", session_id, e)
-                result = run_claude(cfg, p, timeout=300)
+                result = run_llm(cfg, p, timeout=300).text
         else:
-            result = run_claude(cfg, p, timeout=300)
+            result = run_llm(cfg, p, timeout=300).text
         data = extract_json(result)
         text = (data.get("post_text") or "").strip()
         if not text:
@@ -386,12 +386,12 @@ def reddit_title(cfg, day, session_id, post_text,
     def _ask(p: str) -> str:
         if session_id:
             try:
-                result = run_claude(cfg, p, session_id=session_id, resume=True, timeout=300)
+                result = run_llm(cfg, p, session=session_id, timeout=300).text
             except Exception as e:
                 log.warning("reddit title: session %s unusable (%s) — falling back", session_id, e)
-                result = run_claude(cfg, p, timeout=300)
+                result = run_llm(cfg, p, timeout=300).text
         else:
-            result = run_claude(cfg, p, timeout=300)
+            result = run_llm(cfg, p, timeout=300).text
         data = extract_json(result)
         title = (data.get("title") or "").strip()
         if not title:
@@ -459,20 +459,22 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
                   if files_dir.exists() else {})
 
     # Rarely, the model appends a trailing thinking-only turn after already
-    # answering, and `claude -p --output-format json` reports that turn's (empty)
-    # text as `result` — the good answer earlier in the same response is lost to
-    # us. That's non-deterministic, so a single retry on a fresh session usually
-    # gets a clean answer rather than losing the whole day's draft to it.
-    session_id = str(uuid.uuid4())
-    result = run_claude(cfg, prompt, timeout=1800, session_id=session_id, **read_kwargs)
+    # answering, and the CLI reports that turn's (empty) text as the result —
+    # the good answer earlier in the same response is lost to us. That's
+    # non-deterministic, so a single retry on a fresh session usually gets a
+    # clean answer rather than losing the whole day's draft to it.
+    #
+    # Call-then-record, not mint-then-call: Codex can't be handed a session id
+    # up front (no --session-id equivalent), only discovered from its response,
+    # so the session id is learned from the result rather than chosen before it.
+    result = run_llm(cfg, prompt, timeout=1800, **read_kwargs)
     try:
-        data = extract_json(result)
+        data = extract_json(result.text)
     except ValueError as e:
         log.warning("write_drafts: %s — retrying once on a fresh session", e)
-        session_id = str(uuid.uuid4())
-        result = run_claude(cfg, prompt, timeout=1800, session_id=session_id, **read_kwargs)
-        data = extract_json(result)
-    store.set_day_session(day, session_id)
+        result = run_llm(cfg, prompt, timeout=1800, **read_kwargs)
+        data = extract_json(result.text)
+    store.set_day_session(day, result.session_id, backend=result.backend)
 
     rejected = data.get("rejected") or []
     ids = []

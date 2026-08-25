@@ -1,228 +1,188 @@
-# dailypost — your daily work, turned into a LinkedIn draft
+# dailypost
 
-A self-hosted pipeline that harvests one day of your real work — Claude Code
-sessions, WhatsApp/Telegram chats, Gmail, meeting-notetaker emails, screenshots,
-(optionally) call debriefs and audio — asks an LLM to pick the day's best story,
-and delivers a ready-to-publish LinkedIn draft to a private Telegram bot with
-**Approve / Edit / Skip** buttons. Approve draws an illustration for the post and
-shows it to you first — **nothing reaches LinkedIn until a second tap**. Publishing
-goes through the official *Share on LinkedIn* API (`w_member_social`).
-Never auto-publishes.
+Nobody has the time — or the will — to sit down and write a post every day.
+dailypost does it for you, from what you actually did that day.
 
-Once a LinkedIn post actually publishes, it can optionally also go to X
-(Twitter): the same day's Claude session writes a separate, shorter X-native
-rewrite (not a truncation — X's limit is 280 chars against LinkedIn's
-1,100–1,600), and that gets its own **Post to X / Rewrite / Replace text / Skip X**
-buttons. Nothing reaches X until that second tap either, and nothing in that
-step can affect the LinkedIn post already made. See [Also post to X](#also-post-to-x).
+## What it does
 
-It can also hand you a ready-to-submit **Reddit** draft: a prefilled submit
-link plus copy-paste title/body, reusing the LinkedIn text as-is (Reddit's API
-is effectively closed to new self-serve apps, so nothing is submitted by
-code — you tap Submit yourself, in your own browser, in your own session). See
-[Also post to Reddit](#also-post-to-reddit).
+Every night, dailypost looks back at your day — your coding-agent sessions
+(Claude Code or Codex/ChatGPT), screenshots, and optionally your Telegram,
+Gmail, WhatsApp, and even a spoken debrief you record after a call — picks
+the single best story, and drafts a post. That draft lands in a private
+Telegram bot with **Approve / Edit / Skip** buttons. Approve also draws an
+illustration and shows it to you before anything is public — **nothing posts
+until a second tap.**
 
-Runs on any Linux server + optional laptop; nothing instance-specific is in the
-code — everything lives in `config.yaml` / `.env` (both git-ignored).
+Once that post is live on LinkedIn, dailypost can spin off the same story for
+**X** (a real rewrite, not a truncation) and **Reddit** (a prefilled link you
+submit yourself), each with its own approval step and its own on/off switch.
 
-## How it works
+Runs on one laptop for one person — no server needed, and the main way most
+people use it — or on a shared server for a few people.
 
+## Why it's good
+
+- **Posts come from what you actually did**, not a blank-box prompt — reads
+  like your week, not like content marketing.
+- **Never auto-publishes, on any platform.** Every channel needs an explicit
+  tap after you've seen the exact text (and, for LinkedIn, the exact image).
+- **Runs on your own machine.** In laptop mode nothing leaves it except what
+  you explicitly approve for posting.
+- **Costs close to $0.** Drafting rides on the Claude Code or ChatGPT
+  subscription you already pay for, not a metered API — see [Cost](#cost).
+- **Posts through real, official APIs** — LinkedIn and X, not a workaround
+  that risks your account. Reddit doesn't have a workable automated-posting
+  API for a personal project right now, so dailypost is honest about that
+  instead of faking it — see [What it posts to](#what-it-posts-to).
+
+## Quickstart
+
+**Fastest: hand it to a coding agent.** If you already use a terminal-based
+agent (Claude Code, Codex, etc.), open it in an empty folder and say
+something like: *"clone `<this repo>` and set it up locally for one
+person, walking me through the wizard."* The wizard is interactive by
+design — you'll still need to answer things yourself, like pasting a
+Telegram bot token or approving a LinkedIn login in your browser — but the
+agent can drive the whole install and relay each question to you as it
+comes up.
+
+**Or run it yourself** (works on Windows, macOS, Linux):
+
+```bash
+git clone <this repo> && cd <repo>
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip
+.venv/bin/python -m setup.wizard                 # mode? -> laptop (the default)
 ```
-laptop ──(nightly tar-over-ssh)──▶ ingest/           screenshots, Claude JSONL, audio
-server harvesters ───────────────▶ SQLite store      telegram, gmail, whatsapp, claude sessions
-nightly cron: digest ─▶ claude -p ─▶ draft ─▶ Telegram bot
-                                             └▶ [Approve] ─▶ image ─▶ [Post] ─▶ LinkedIn
-                                                                          ├▶ rewrite ─▶ [Post to X] ─▶ X
-                                                                          └▶ Reddit link ─▶ [tap Submit yourself]
+
+The wizard walks through: which sessions to harvest, your Telegram bot, and
+— all optional — Gmail/WhatsApp/LinkedIn/images/X/Reddit. Every step is
+re-runnable on its own, e.g. `python -m setup.wizard --source linkedin`.
+When it's done:
+
+```bash
+python -m server.pipeline.run_nightly --dry-run   # one harvest + digest, no posting
+python -m server.bot.main                         # leave this running
 ```
 
-- **Claude Code sessions** are read from `~/.claude/projects/**/*.jsonl` — locally,
-  and/or on a shared multi-user host through a *session filter* (a config-supplied
-  SQL query / command / id-list that says which sessions are yours).
-- **WhatsApp** is captured read-only via self-hosted [WAHA](https://waha.devlike.pro/)
-  (unofficial client — low but nonzero ToS/ban risk; never send through it).
-- **The LLM step** uses the `claude` CLI headlessly with your existing Claude Code
-  credentials ($0 marginal), or `ANTHROPIC_API_KEY` if you prefer the API.
+That one process polls Telegram for your taps and schedules the nightly
+draft itself — no cron, nothing else to install. `python -m setup.wizard
+--doctor` checks your setup any time.
+
+Want a shared, always-on server for a few people instead of one laptop? See
+[Server mode](#server-mode--several-people-on-one-server).
+
+## What it captures
+
+| Source | What it captures | Notes |
+|---|---|---|
+| Claude Code / Codex / ChatGPT sessions | Your coding-agent transcripts | Read locally; covers Claude Code, the Codex CLI, and the ChatGPT desktop app |
+| Screenshots | Whatever you drop into a watched folder | Any OS |
+| Telegram, Gmail, WhatsApp | Your own message/mail history | All optional, all off by default; WhatsApp capture is read-only |
+| Call / office audio | Local speech-to-text on recordings you make, in whatever languages you actually speak | Off by default; recording today is Windows-only (see [Limitations](#limitations--non-goals)) |
+
+Every source is opt-in and walked through by the wizard. `config.example.yaml`
+has the full field-by-field detail as inline comments.
+
+## What it posts to
+
+- **LinkedIn** — the official `w_member_social` API. This is the core flow:
+  draft → approve → optional illustration → post.
+- **X** *(optional, `x.enabled`)* — once a post is live on LinkedIn, the same
+  day's story gets a genuine X-length rewrite (LinkedIn drafts run
+  1,100–1,600 characters; X's default cap is 280), with its own
+  Approve/Rewrite/Skip step. Uses X's official API.
+- **Reddit** *(optional, `reddit.enabled`)* — Reddit closed off practical API
+  access for a project like this, so instead of faking automation, dailypost
+  hands you a prefilled submit link and ready-to-paste title/body — you
+  review it and tap Submit yourself. Nothing is ever posted by code.
+
+Skipping or failing a later step (X, Reddit) never touches a post already
+made on an earlier one. See [Cost](#cost) for what each channel actually
+costs to run.
 
 ## Images
 
-Tapping **Approve** no longer publishes. It asks the *same Claude session that wrote
-the post* for an image brief — so the picture comes from the day's story, not from a
-re-reading of the post's wording — renders it with the Gemini API, and sends it back
-with **Post with image · Regenerate · Post text-only · Cancel**.
+Approve doesn't publish right away — it first asks the *same session that
+wrote the post* for an image brief, renders it, and sends it back with
+**Post with image · Regenerate · Post text-only · Cancel**. Reply to steer it
+("more abstract, no people") and each reply is a new take; regenerating never
+touches LinkedIn, only the final tap does. Turn it off entirely with
+`image.enabled: false`.
 
-While an image is on the table, plain messages steer it ("more abstract, no people",
-"colder palette") and each reply is a new take. `/talk <message>` goes back to
-discussing the words instead. Regenerating never touches LinkedIn; only the final
-tap does.
+## Privacy & safety
 
-- Needs `GEMINI_API_KEY` in `.env` — get one at
-  [aistudio.google.com/apikey](https://aistudio.google.com/apikey). **The image
-  models require billing enabled on that key's project**; a free-tier key
-  authenticates fine and then returns 429 on every render.
-- Roughly $0.13–0.24 per render at `gemini-3-pro-image`, so a few dollars a month
-  at one post a day. `image.model: gemini-3.1-flash-image` is ~3× cheaper.
-- Turn it off with `image.enabled: false` — Approve then publishes in one tap, as
-  it used to. Any render failure also offers *Post text-only*, so you are never
-  stuck with an approved draft you can't publish.
-- Images live in `<store_dir>/images/<day>/`. Published ones are kept forever
-  (LinkedIn won't give them back); unused takes are pruned after
-  `image.retention_days`.
+For a tool that reads your coding transcripts, this is the part that matters
+most.
 
-Set it up with `.venv/bin/python -m setup.wizard --source image`.
+- Everything stays on the machine you configure. In laptop mode, nothing
+  ever leaves it except the exact text (and image) you tap to approve.
+- The drafting/rewrite step runs the LLM in a restricted mode with no
+  general file or tool access.
+- WhatsApp capture is read-only by design.
+- Audio is transcribed locally and the recording is deleted once the
+  transcript exists — the raw audio never persists.
+- Recording other people's conversations has privacy implications of its
+  own — don't quote anyone identifiably in a public post (the default style
+  guide already forbids it).
 
-## Also post to X
+See [CONTRIBUTING.md](CONTRIBUTING.md) if you want the exact sandboxing
+mechanics behind the Claude vs. Codex backends.
 
-Turned on with `x.enabled: true`. Once a draft actually publishes to LinkedIn —
-not before — the same day's Claude session writes a separate X-native rewrite of
-the same fact (the LinkedIn style guide targets 1,100–1,600 characters; X's default
-cap is 280, so this is a genuine rewrite, not a truncation). It arrives in
-Telegram with its own **Post to X · Rewrite · Replace text · Skip X** buttons,
-reusing the same illustration if one was posted with the LinkedIn version.
-Failing or skipping this step never touches the LinkedIn post already made.
+## Cost
 
-- Needs an X (Twitter) developer App with OAuth 1.0a keys in `.env`:
-  `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`. Unlike
-  LinkedIn's OAuth2 flow, these don't expire on their own — no token file, no
-  refresh step. **Generate the access token after** setting the App's
-  permissions to "Read and write", or it stays read-only and every post 403s.
-- One App can post for several people the same way one LinkedIn App already
-  can (see [Several people on one server](#several-people-on-one-server)): the
-  owner generates `X_ACCESS_TOKEN`/`X_ACCESS_TOKEN_SECRET` for themselves
-  directly in [developer.x.com](https://developer.x.com); everyone else shares
-  the owner's `X_API_KEY`/`X_API_SECRET` and gets their own access token via
-  `python -m server.bot.x_auth` — a PIN-based OAuth flow that opens a URL,
-  signs in as their own account, and writes the pair into their own instance's
-  `.env`.
-- The X API Free tier caps writes at roughly 500 posts/month per App — plenty
-  for one post a day.
-- `x.max_chars` (default 280) is a soft guard the rewrite targets; X's own API
-  response is the real authority on length. Before each rewrite the bot checks
-  the posting account's own `subscription_type` via `GET /2/users/me` and, if
-  it has any paid X subscription, uses `x.premium_max_chars` (default 25000)
-  instead — per account, automatically, no config edit needed. Each person's
-  instance is checked independently, so on a shared server one person having
-  Premium doesn't raise another person's limit.
-- If the bot restarts between a LinkedIn publish and the X step starting, `/x`
-  in Telegram recovers it.
+| Item | Marginal cost |
+|---|---|
+| Drafting, image briefs, X/Reddit rewrites, session summaries | ~$0 — runs through your existing Claude Code or ChatGPT/Codex subscription's CLI, not a metered API (an API key also works if you'd rather pay per-token) |
+| LinkedIn publishing | $0 — official API |
+| Post illustrations *(optional)* | ~$0.13–0.24/render; `image.enabled: false` skips this entirely |
+| X posting *(optional)* | Pay-per-use, no free tier — well under $1/month at one post a day |
+| Reddit *(optional)* | $0 — no API, no account; it's a link you submit yourself |
 
-Set it up with `.venv/bin/python -m setup.wizard --source x`. Probes that don't
-touch your timeline: `python -m server.bot.x_client --dry-run "text"` and
-`--check`.
+At one post a day with images on, expect low-single-digit dollars a month.
 
-## Also post to Reddit
+## Server mode / several people on one server
 
-Turned on with `reddit.enabled: true`. Reddit closed self-serve API access to
-new apps (the old PRAW/Devvit path is a dead end), and this server's IP is
-separately blocked by `oauth.reddit.com` — so this step doesn't post at all.
-Once the LinkedIn publish (and, if enabled, the X step) resolves, the same
-day's Claude session writes a short Reddit-appropriate **title** for the
-post, the LinkedIn body is reused as-is (hashtags stripped — Reddit doesn't
-use them), and Telegram sends a prefilled
-`reddit.com/r/<sub>/submit?...` link plus one-tap-copyable title/body code
-blocks with **Mark as posted / New title / Edit title / Skip** buttons. You
-open the link, review it, and tap Submit yourself — nothing is ever
-submitted by code, and skipping or failing this step never touches the
-LinkedIn (or X) post already made.
-
-- No account, API keys, or OAuth app needed — this is draft assist, not
-  posting.
-- `reddit.subreddit` is a single subreddit (no cross-posting, no flair); the
-  wizard asks for it without the `r/` prefix.
-- `reddit.min_hours_between_posts` (default 48) adds a one-line cadence nudge
-  to the delivery message if you're posting to the subreddit faster than
-  that — it never blocks you, just flags it.
-- If the bot restarts between a LinkedIn publish and the Reddit link being
-  sent, `/reddit` in Telegram recovers it.
-
-Set it up with `.venv/bin/python -m setup.wizard --source reddit`.
-
-## Setup
-
-Server:
+For an always-on shared box instead of a laptop, with a separate laptop
+feeding it over SSH:
 
 ```bash
 git clone <this repo> && cd <repo>
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m setup.wizard        # interactive: picks sources AND provisions them
+.venv/bin/python -m setup.wizard        # mode? -> server
 .venv/bin/python -m setup.wizard --doctor
-server/run_nightly.sh --dry-run         # first harvest, no LLM/Telegram
 ```
 
-Laptop (Windows, pushes Claude sessions + screenshots):
+Each additional person gets their own instance — separate config, secrets,
+store, Telegram bot, and LinkedIn token — via
+`.venv/bin/python -m setup.wizard --instance alice`. People can share one
+LinkedIn or X App's credentials the same way a team shares any App: whoever
+sets it up first pastes the client id/secret, everyone else just runs their
+own login to get their own token — see the wizard's `linkedin`/`x` steps.
 
-```powershell
-git clone <this repo>
-powershell -ExecutionPolicy Bypass -File setup\wizard_laptop.ps1
-```
+Full walkthrough (cron, systemd, Windows laptop push, CI auto-deploy) lives
+in [docs/self-hosting/ci-deploy.md](docs/self-hosting/ci-deploy.md) and the
+wizard's own prompts.
 
-The wizard handles: directories, venv, cron, systemd bot service, Telegram login
-(Telethon), bot chat-id detection, WAHA docker + QR pairing, Gmail OAuth guidance,
-LinkedIn OAuth guidance, Gemini image key. Every step is re-runnable:
-`python -m setup.wizard --source telegram`.
+## Limitations & non-goals
 
-Want `git push` to `main` to auto-deploy to your server? See
-[docs/self-hosting/ci-deploy.md](docs/self-hosting/ci-deploy.md) — optional,
-`server/deploy.sh` still works for manual deploys.
+- **Only local coding-agent history is read.** Codex Cloud tasks and the
+  plain ChatGPT web/desktop chat tab aren't in the local session store, so
+  they aren't harvested.
+- **WhatsApp carries real, if low, ToS/ban risk** — it goes through an
+  unofficial client, not WhatsApp's Business API. Read-only by design.
+- **Reddit is draft-assist only, never automated posting** — see
+  [What it posts to](#what-it-posts-to).
+- **Call/office audio recording is Windows-only today** — the recorder
+  scripts have no macOS/Linux equivalent yet. Transcription itself runs on
+  any OS once audio reaches the server.
+- **Laptop mode has no OS-level autostart.** `python -m server.bot.main`
+  needs to be left running yourself (a terminal, `screen`/`tmux`, or your
+  OS's own way of keeping a process alive).
 
-## Several people on one server
+## Contributing / Security / Licence
 
-Each person gets their own instance: separate config, secrets, store, Telegram
-bot, LinkedIn token, cron entry, bot service and WAHA container. Shared code and
-venv, no interference.
-
-On the server, for each additional person:
-
-```bash
-.venv/bin/python -m setup.wizard --instance alice
-```
-
-Everything lands in `instances/alice/` and the wizard installs
-`dailypost-bot@alice` plus a cron line carrying `DAILYPOST_CONFIG`. Health check
-and single steps take the same flag:
-
-```bash
-.venv/bin/python -m setup.wizard --instance alice --doctor
-```
-
-On a shared multi-user coding host, each instance's `claude_sessions` filter
-selects only that person's sessions (their own username in the SQL filter), and
-each person runs the laptop wizard on their own machine pointing at their own
-ingest dir. Note that instances share the run-as user, so anyone with that user's
-shell can read every instance's store — separate Linux users if that matters.
-
-## Configuration
-
-Copy `config.example.yaml` → `config.yaml` and `.env.example` → `.env` (the wizard
-does this for you). Key ideas:
-
-- `sources:` is a **list of adapter instances** — enable, disable, or duplicate
-  freely. Types: `claude_projects_dir`, `claude_sessions` (with filter strategies
-  `all | sql | command | id_file`), `ingest_dir`, `telegram`, `gmail`, `whatsapp`.
-- `pipeline:` timezone, cron, size caps, model, `always_hashtags` (asked
-  interactively by the wizard) — tags included verbatim on every X rewrite (not
-  the LinkedIn draft); the X rewrite is additionally asked to add a couple more
-  tags relevant to that specific post.
-- `image:` illustration model, aspect ratio, size, regeneration cap — or
-  `enabled: false` to skip the image step entirely.
-- `x:` char limit, rewrite cap, how long a candidate stays steerable — `enabled:
-  false` (the default) skips the X step entirely; see [Also post to X](#also-post-to-x).
-- `reddit:` subreddit, title char cap, cadence nudge threshold — `enabled:
-  false` (the default) skips the Reddit step entirely; see [Also post to
-  Reddit](#also-post-to-reddit).
-- Style/voice of the drafts: edit `server/pipeline/prompts/style-guide.md`; the
-  look of the images: `image.style_suffix` in `config.yaml`.
-
-## Privacy & safety notes
-
-- Transcripts contain source code and secrets. The store stays on your server
-  (`chmod 700`), is never exposed over HTTP, and raw files are pruned after
-  `retention_days`.
-- WhatsApp capture is read-only by design; documented bans overwhelmingly involve
-  *sending*. If you're not comfortable with the residual risk, disable the source.
-- Recording/processing other people's messages has privacy implications — don't
-  quote anyone identifiably in public posts (the default style guide forbids it).
-
-## License
-
-MIT
+- Found a bug or want a feature? See [CONTRIBUTING.md](CONTRIBUTING.md).
+- Found a security issue? See [SECURITY.md](SECURITY.md) — please don't open
+  a public issue for anything that touches credentials or account safety.
+- [LICENSE](LICENSE): MIT.

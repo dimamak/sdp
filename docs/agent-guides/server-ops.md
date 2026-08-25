@@ -1,16 +1,18 @@
 # Server Ops
 
-Rules for debugging or changing anything on the box running dailypost
-(`/opt/dailypost/app`, the `dailypost-bot*` services, `dailypost.db`).
+Rules for debugging or changing anything on a box running dailypost's server
+deployment (typically `/opt/dailypost/app`, the `dailypost-bot*` services,
+`dailypost.db`).
 
 ## Restarting bot services without sudo
 
-`systemctl restart dailypost-bot.service` / `dailypost-bot@Anton.service` fails
-with "Interactive authentication required" for the codeagent user. Instead:
+`systemctl restart dailypost-bot.service` / `dailypost-bot@<instance>.service`
+can fail with "Interactive authentication required" for a non-root deploy
+user. Instead:
 
 ```
 systemctl show <service> -p MainPID
-kill -TERM <pid>          # codeagent owns the process, no root needed
+kill -TERM <pid>          # the deploy user owns the process, no root needed
 ```
 
 `Restart=always` (RestartSec=10) in both unit files relaunches it automatically

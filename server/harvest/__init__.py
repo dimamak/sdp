@@ -43,7 +43,7 @@ def unsafe_sources(cfg) -> list[str]:
 
 def collect_all(cfg, store, since: datetime) -> dict[str, int]:
     """Run every enabled source; returns {source name: new item count}."""
-    from . import claude_localdir, claude_sessions, ingest_dir, telegram, gmail  # noqa: F401  (register)
+    from . import claude_localdir, claude_sessions, codex_sessions, ingest_dir, telegram, gmail  # noqa: F401  (register)
     from ..util import get_logger
 
     refused = set(unsafe_sources(cfg))

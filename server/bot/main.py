@@ -181,6 +181,9 @@ class Bot:
         chat = update.effective_chat
         return chat is not None and chat.id == self.chat_id
 
+    def backend(self) -> str:
+        return str(self.cfg.get("pipeline.backend", "claude") or "claude")
+
     # ---- conversation --------------------------------------------------------
 
     def target_draft(self, update: Update):
@@ -205,7 +208,7 @@ class Bot:
         `target` is the draft under discussion; a returned post updates it unless
         new_draft is set, in which case it becomes an additional draft.
         """
-        row = self.store.latest_day_session()
+        row = self.store.latest_day_session(backend=self.backend())
         if row is None:
             await context.bot.send_message(
                 self.chat_id, "No day session yet — the nightly run creates one when it drafts.")
@@ -262,7 +265,7 @@ class Bot:
             return
 
         # resolve everything the workers need while still on the event-loop thread
-        session_id = self.store.session_for_day(draft["day"])
+        session_id = self.store.session_for_day(draft["day"], backend=self.backend())
         prev_prompt = prev["prompt"] if prev else None
         out_path = self.store.image_path_for(draft["day"], draft_id, n)
         post_text = draft["text"]
@@ -391,7 +394,7 @@ class Bot:
                 reply_markup=x_start_keyboard(draft_id))
             return
 
-        session_id = self.store.session_for_day(draft["day"])
+        session_id = self.store.session_for_day(draft["day"], backend=self.backend())
         prev_text = prev["text"] if prev else None
         post_text = draft["text"]
         limit = int(self.cfg.get("x.max_chars", 280))
@@ -541,7 +544,7 @@ class Bot:
                 reply_markup=reddit_start_keyboard(draft_id))
             return
 
-        session_id = self.store.session_for_day(draft["day"])
+        session_id = self.store.session_for_day(draft["day"], backend=self.backend())
         post_text = draft["text"]
         title_max = int(self.cfg.get("reddit.title_max", 300))
         prev_msg_id = draft["reddit_tg_message_id"]
@@ -944,6 +947,11 @@ def main() -> None:
         raise SystemExit("TG_BOT_TOKEN / TG_ALLOWED_CHAT_ID not set in .env")
 
     start_waha_webhook(cfg)
+    if cfg.get("mode", "server") == "laptop":
+        # Server installs are scheduled by cron; a laptop needs a scheduler
+        # that survives sleep, so it lives in this already-running process.
+        from .scheduler import start as start_scheduler
+        start_scheduler(cfg)
 
     bot = Bot(cfg)
     app = Application.builder().token(token).build()

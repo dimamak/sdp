@@ -135,6 +135,7 @@ class Store:
             "reddit_tg_message_id": "TEXT",
         })
         _ensure_columns(self.db, "draft_x", {})
+        _ensure_columns(self.db, "day_sessions", {"backend": "TEXT DEFAULT 'claude'"})
         self.db.commit()
 
     # ---- items -------------------------------------------------------------
@@ -278,23 +279,40 @@ class Store:
         ).fetchone()
 
     # ---- day sessions (conversation continuity) -------------------------------
-    def set_day_session(self, day: str, session_id: str) -> None:
+    def set_day_session(self, day: str, session_id: str, backend: str = "claude") -> None:
         self.db.execute(
-            "INSERT INTO day_sessions(day, session_id) VALUES(?,?)"
-            " ON CONFLICT(day) DO UPDATE SET session_id=excluded.session_id",
-            (day, session_id),
+            "INSERT INTO day_sessions(day, session_id, backend) VALUES(?,?,?)"
+            " ON CONFLICT(day) DO UPDATE SET session_id=excluded.session_id, backend=excluded.backend",
+            (day, session_id, backend),
         )
         self.db.commit()
 
-    def latest_day_session(self) -> sqlite3.Row | None:
+    def latest_day_session(self, backend: str | None = None) -> sqlite3.Row | None:
+        if backend:
+            return self.db.execute(
+                "SELECT * FROM day_sessions WHERE backend=? ORDER BY day DESC LIMIT 1",
+                (backend,),
+            ).fetchone()
         return self.db.execute(
             "SELECT * FROM day_sessions ORDER BY day DESC LIMIT 1"
         ).fetchone()
 
-    def session_for_day(self, day: str) -> str | None:
+    def session_for_day(self, day: str, backend: str | None = None) -> str | None:
+        """The day's resumable session id, or None if there isn't one usable.
+
+        A session minted under a different backend than the one currently
+        configured can't be resumed — trying anyway gets a confusing CLI
+        failure instead of the clean "no session -> one-shot" fallback every
+        resume call site already has, so a backend mismatch is treated exactly
+        like no session existing.
+        """
         row = self.db.execute(
-            "SELECT session_id FROM day_sessions WHERE day=?", (day,)).fetchone()
-        return row["session_id"] if row else None
+            "SELECT session_id, backend FROM day_sessions WHERE day=?", (day,)).fetchone()
+        if not row:
+            return None
+        if backend and row["backend"] and row["backend"] != backend:
+            return None
+        return row["session_id"]
 
     # ---- draft images ---------------------------------------------------------
     def add_image(self, draft_id: int, n: int, *, prompt: str | None = None,

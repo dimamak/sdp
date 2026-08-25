@@ -16,6 +16,7 @@ from ..store import Store
 from ..util import get_logger, local_tz, target_day, window_start_iso
 from .digest import build_digest
 from .draft import deliver_drafts, notify, write_drafts
+from .lock import nightly_lock
 from .transcribe import transcribe_pending
 
 log = get_logger("nightly")
@@ -85,6 +86,15 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     cfg = Config.load(args.config)
+    lock_path = cfg.path.parent / ".nightly.lock"
+    with nightly_lock(lock_path) as acquired:
+        if not acquired:
+            log.warning("another run for %s is still in progress; skipping", cfg.path)
+            return 0
+        return _run(cfg, args)
+
+
+def _run(cfg: Config, args: argparse.Namespace) -> int:
     store = Store(cfg.path_of("store_dir"))
     day = args.day or target_day(cfg)
     since = datetime.fromisoformat(window_start_iso(cfg))
@@ -117,7 +127,12 @@ def main(argv=None) -> int:
     # the laptop carries the coding sessions, screenshots and office audio. If it
     # was asleep at 23:00, hold off until it checks in — but never past the
     # deadline, or a laptop left off all week would mean no posts at all.
-    if not args.force and not args.dry_run and cfg.get("pipeline.wait_for_laptop", True):
+    # This whole dance is a server-mode concept (waiting for a SEPARATE physical
+    # laptop to push data over SSH): in laptop-only mode every source is already
+    # local, there is no push, and no heartbeat file is ever written — waiting for
+    # one would silently defer every draft until wait_deadline_hour, every night.
+    if (cfg.get("mode") != "laptop" and not args.force and not args.dry_run
+            and cfg.get("pipeline.wait_for_laptop", True)):
         deadline_hour = int(cfg.get("pipeline.wait_deadline_hour", 12))
         local_now = datetime.now(local_tz(cfg))
         if not laptop_checked_in_since(cfg, since):

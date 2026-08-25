@@ -17,7 +17,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .claude_cli import run_claude
+from .llm import run_llm
 from ..util import get_logger, window_start_iso
 
 log = get_logger("pipeline.digest")
@@ -136,16 +136,89 @@ def _compress_jsonl(path: Path, since: datetime | None = None) -> str:
     return text[:_NARRATIVE_SAFETY_CAP]
 
 
+def _codex_cwd(rec: dict) -> str | None:
+    if rec.get("type") not in ("session_meta", "turn_context"):
+        return None
+    payload = rec.get("payload") or rec
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("cwd"):
+        return payload["cwd"]
+    sel = payload.get("TurnEnvironmentSelections")
+    return sel.get("cwd") if isinstance(sel, dict) else None
+
+
+def _codex_message_text(rec: dict) -> tuple[str | None, str | None]:
+    """(role, text) from a response_item message record, or (None, None) if
+    this record isn't one. Defensive on purpose — the Codex rollout schema is
+    undocumented, version-dependent, and has already changed shape across
+    releases; an unrecognised record is skipped, never raised on."""
+    if rec.get("type") != "response_item":
+        return None, None
+    payload = rec.get("payload")
+    if not isinstance(payload, dict) or payload.get("type") != "message":
+        return None, None
+    role = payload.get("role")
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return None, None
+    parts = [str(b["text"]) for b in content
+            if isinstance(b, dict) and b.get("type") in ("input_text", "output_text", "text") and b.get("text")]
+    text = "\n".join(parts).strip()
+    return (role, text) if text else (None, None)
+
+
+def _compress_codex_jsonl(path: Path, since: datetime | None = None) -> str:
+    """Reduce a Codex rollout transcript to a readable narrative, keeping only
+    messages written within the harvest window. Mirrors _compress_jsonl but for
+    Codex's {"type": "session_meta"|"turn_context"|"response_item"|"event_msg"}
+    record shape — every line still carries an ISO-8601 timestamp, so _in_window
+    works unchanged."""
+    if not path.exists():
+        return ""
+    lines_out: list[str] = []
+    cwd = None
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                cwd = _codex_cwd(rec) or cwd
+                if not _in_window(rec, since):
+                    continue
+                role, text = _codex_message_text(rec)
+                if not text:
+                    continue
+                if role == "user":
+                    lines_out.append(f"USER: {text[:600]}")
+                elif role == "assistant":
+                    lines_out.append(f"ASSISTANT: {text[:400]}")
+    except OSError as e:
+        log.warning("cannot read %s: %s", path, e)
+        return ""
+    if not lines_out:
+        return ""  # touched file, but nothing said inside the window
+    header = f"(project: {cwd or path.name})"
+    text = header + "\n" + "\n".join(lines_out)
+    return text[:_NARRATIVE_SAFETY_CAP]
+
+
 def _summarize_session(cfg, narrative: str, cap: int) -> str:
     """Dense summary of a session's in-window narrative via a cheap model.
 
     Falls back to a raw head-slice of the narrative on any failure — losing the
     density but never losing the item outright over a transient model error.
     """
-    model = str(cfg.get("pipeline.summary_model", "claude-haiku-4-5"))
+    backend = str(cfg.get("pipeline.backend", "claude") or "claude")
+    default_model = "claude-haiku-4-5" if backend == "claude" else None
+    model = cfg.get("pipeline.summary_model", default_model)
     prompt = SESSION_SUMMARY_PROMPT.format(narrative=narrative, cap=cap)
     try:
-        summary = run_claude(cfg, prompt, model=model, timeout=300).strip()
+        summary = run_llm(cfg, prompt, model=str(model) if model else None, timeout=300).text.strip()
     except Exception as e:
         log.warning("session summary failed (%s) — falling back to raw excerpt", e)
         return narrative[:cap]
@@ -160,12 +233,17 @@ def describe_screenshots(cfg, store, items) -> None:
     paths = [i["path"] for i in todo]
     dirs = sorted({str(Path(p).parent) for p in paths})
     prompt = (
-        "For each screenshot file listed below, Read it and output exactly one line:\n"
+        "Each screenshot below is available to you, either via the Read tool or "
+        "as an attached image. For each one output exactly one line:\n"
         "<filename>: <one-sentence description of what the screenshot shows>\n"
         "No other text.\n\n" + "\n".join(paths)
     )
     try:
-        result = run_claude(cfg, prompt, allow_read_dirs=dirs, timeout=900)
+        # allow_read_dirs is how the Claude backend sees these (Read tool);
+        # images is how the Codex backend sees them (-i flags, since Codex's
+        # --add-dir grants write access, not read) — each backend uses the one
+        # it understands and ignores the other.
+        result = run_llm(cfg, prompt, allow_read_dirs=dirs, images=paths, timeout=900).text
     except Exception as e:
         log.warning("screenshot description failed: %s", e)
         return
@@ -212,9 +290,10 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
     for item in items:
         ids.append(item["id"])
         src = item["source"]
-        if item["kind"] == "claude_jsonl":
+        if item["kind"] in ("claude_jsonl", "codex_jsonl"):
             path = item["path"]
-            narrative = _compress_jsonl(Path(path), since=window_start)
+            compress = _compress_jsonl if item["kind"] == "claude_jsonl" else _compress_codex_jsonl
+            narrative = compress(Path(path), since=window_start)
             if not narrative:
                 skipped_stale += 1
                 continue

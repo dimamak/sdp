@@ -13,16 +13,23 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   official LinkedIn `w_member_social` post
 - Interactive setup wizard (`python -m setup.wizard`) + `--doctor`
 
-## Phase 2 — Audio  ▢ planned
-- Phone post-call debrief habit: automation rule ("call ended AND duration > 3 min
-  → notification → tap opens recorder"), file reaches the server via a cloud-sync
-  folder included in the laptop push list (or Syncthing phone→server)
-- Laptop in-person recording (Buzz / hotkey WAV recorder) into a pushed folder
-- Server transcription: faster-whisper, INT8 `large-v3-turbo`; for Hebrew use the
-  ivrit.ai fine-tuned weights with `language='he'` (the fine-tune can't translate —
-  transcribe Hebrew, let the draft LLM translate); configurable threads + nice level;
-  optional Groq API fallback for English/overflow
-- `transcribe.py` drains the audio queue before the digest step
+## Phase 2 — Audio  ✅ implemented (laptop-only capture)
+- Laptop always-on office audio capture (`laptop/record_audio.ps1`): continuous
+  mic recording in short Opus segments, silence-swept locally so a quiet day
+  never leaves the laptop; a `PAUSED` flag file or `stop_recording.cmd` mutes
+  it for private conversations
+- Server transcription (`server/pipeline/transcribe.py`): faster-whisper,
+  INT8 `large-v3-turbo` by default; for Hebrew-only rooms the ivrit.ai
+  fine-tune with `language: 'he'` (the fine-tune can't translate — transcribe
+  Hebrew, let the draft LLM translate); configurable device/threads/beam size;
+  raw audio is deleted once a transcript exists
+- `transcribe_pending()` drains the audio queue before the digest step on
+  every nightly run
+- Still open: a phone post-call debrief habit (automation rule → recorder →
+  file reaches the server via cloud-sync or Syncthing), a hotkey/manual WAV
+  recorder for in-person conversations, a Groq API fallback for
+  overflow/English transcription, and a macOS/Linux equivalent of the
+  Windows-only recorder script
 
 ## Phase 3 — Images  ✅ implemented
 - Approve is now two-stage: it draws an illustration for the post (Gemini API,
@@ -86,3 +93,38 @@ git-ignored `PLAN.local.md` / `config.yaml`).
 - No OAuth client, token file, or API credentials of any kind — the contingency
   plan for a real posting integration (once Reddit's API situation changes) is
   kept spec'd but deliberately unbuilt
+
+## Phase 7 — Laptop-only mode  ✅ implemented
+- `mode: laptop` replaces cron + systemd with an in-process scheduler thread
+  inside the already-running Telegram bot (`server/bot/scheduler.py`) — it
+  wakes periodically and catches up on the missed slot if the machine was
+  asleep at the scheduled time, since a single laptop can't rely on cron
+  firing exactly on time
+- Cross-platform single-instance lock (`server/pipeline/lock.py`): `fcntl`
+  advisory locking on POSIX, `msvcrt` on Windows, same non-blocking semantics
+  either way
+- Setup wizard asks laptop-vs-server up front and branches its whole step
+  order and defaults (home-directory paths instead of `/opt`, no run-as user)
+- No separate server needed for the main single-person use case; the old
+  Windows-laptop-pushes-to-a-remote-server architecture (Phase 1) still works
+  unchanged for people who want an always-on shared box instead
+
+## Phase 8 — Codex / ChatGPT support  ✅ implemented
+- New `codex_sessions` harvest adapter reads `$CODEX_HOME/sessions/` — the
+  Codex CLI, its IDE extension, and the ChatGPT desktop app (merged into
+  Codex on 2026-07-09) all write to the same local store, so one adapter
+  covers both "I use Codex" and "I use ChatGPT"
+- `pipeline.backend: claude | codex` picks which CLI drafts posts, briefs
+  images, and rewrites for X/Reddit — an `LLMResult` abstraction
+  (`server/pipeline/llm.py`) hides the difference from the rest of the
+  pipeline
+- Codex has no way to pre-assign a session id the way `claude -p
+  --session-id` does; the id is only discoverable from the `thread.started`
+  event after the first call, and resumed with `codex exec resume <id>` — the
+  pipeline's mint-then-record pattern was inverted to call-then-record to
+  match
+- A `backend` column on stored sessions stops a Claude session from being
+  mistakenly resumed under the Codex backend (or vice versa) if you switch
+  backends between runs — falls back to a fresh one-shot call instead
+- Does not cover Codex Cloud tasks or the plain ChatGPT web/desktop Chat tab
+  — see the README's [Limitations](README.md#limitations--non-goals)

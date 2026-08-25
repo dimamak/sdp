@@ -2,6 +2,7 @@
 config.yaml
 .env
 laptop/push.conf
+laptop/.last_push
 *.session
 *.session-journal
 tokens/
@@ -13,6 +14,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # OS
 .DS_Store
