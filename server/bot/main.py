@@ -98,8 +98,10 @@ def x_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def reddit_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+def reddit_keyboard(draft_id: int, app_link: str, browser_link: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("using reddit app", url=app_link),
+         InlineKeyboardButton("using browser", url=browser_link)],
         [InlineKeyboardButton("✅ Mark as posted", callback_data=f"rpost:{draft_id}"),
          InlineKeyboardButton("🔁 New title", callback_data=f"rredo:{draft_id}")],
         [InlineKeyboardButton("✏️ Edit title", callback_data=f"redit:{draft_id}"),
@@ -114,30 +116,39 @@ def reddit_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def reddit_submit_link(subreddit: str, title: str, body: str, max_chars: int = 4000) -> tuple[str, bool]:
-    """Prefilled Reddit submit URL. Returns (url, body_included).
+def reddit_submit_link(subreddit: str, title: str, body: str,
+                       max_chars: int = 4000) -> tuple[tuple[str, bool], tuple[str, bool]]:
+    """Prefilled Reddit submit URLs. Returns ((app_url, body_included), (browser_url, body_included)).
 
     quote(), not quote_plus() — Reddit's form reads a literal '+' in the body.
-    If the full URL would exceed max_chars, the body is dropped from the link
-    (title-only prefill); the body always still ships in its own copy-block
-    message regardless, so nothing is silently lost, only the prefill.
+    If a variant's full URL would exceed max_chars, its body is dropped from
+    the link (title-only prefill); the body always still ships in its own
+    copy-block message regardless, so nothing is silently lost, only the
+    prefill.
 
-    Tapping this from Telegram hands off to the Reddit app (universal link),
-    whose deep-link handler decodes the URL an extra time before Reddit's own
-    composer sees it — so a single %0A arrives as a raw, invalid newline and
-    gets dropped, flattening paragraphs. A real browser only decodes once, so
-    it isn't affected. Doubly-encoding just the newlines (%250A, which still
-    single-decodes correctly to %0A in a browser) survives the app's extra
-    decode either way; every other character only needs one, harmless either
-    way, so it's left alone.
+    Two variants because they need different newline encoding and there's no
+    single string that works for both: tapping the link from Telegram hands
+    off to the Reddit app (universal link), whose deep-link handler decodes
+    the URL an extra time before Reddit's own composer sees it, so a single
+    %0A arrives as a raw, invalid newline and gets dropped, flattening
+    paragraphs — it needs %250A instead, which survives that extra decode. A
+    browser opening the link directly only decodes once, so it needs the
+    plain single %0A; %250A would show up as literal "%0A" text there. Every
+    other character only needs one decode either way, so only the newlines
+    differ between the two.
     """
     base = f"https://www.reddit.com/r/{subreddit}/submit?selftext=true"
     title_q = f"&title={quote(title)}" if title else ""
-    body_q = quote(body).replace("%0A", "%250A")
-    full = f"{base}{title_q}&text={body_q}"
-    if len(full) <= max_chars:
-        return full, True
-    return f"{base}{title_q}", False
+    body_q_single = quote(body)
+    body_q_double = body_q_single.replace("%0A", "%250A")
+
+    def _variant(body_q: str) -> tuple[str, bool]:
+        full = f"{base}{title_q}&text={body_q}"
+        if len(full) <= max_chars:
+            return full, True
+        return f"{base}{title_q}", False
+
+    return _variant(body_q_double), _variant(body_q_single)
 
 
 def _tg_code_block(text: str) -> str:
@@ -475,14 +486,16 @@ class Bot:
         MarkdownV2 code blocks so Telegram makes them one-tap copyable and never
         mangles the text as formatting."""
         max_chars = int(self.cfg.get("reddit.max_link_chars", 4000))
-        link, body_included = reddit_submit_link(subreddit, title, body, max_chars)
-        head = f"📮 Reddit — r/{subreddit}\n{link}"
+        (app_link, app_included), (browser_link, browser_included) = reddit_submit_link(
+            subreddit, title, body, max_chars)
+        head = f"📮 Reddit — r/{subreddit}"
         if not title:
             head += "\n\n⚠️ title generation failed — type one on the form."
-        if not body_included:
+        if not (app_included and browser_included):
             head += "\n\n⚠️ body too long for the link — copy it from below."
-        sent = await context.bot.send_message(self.chat_id, head[:4000],
-                                              reply_markup=reddit_keyboard(draft_id))
+        sent = await context.bot.send_message(
+            self.chat_id, head[:4000],
+            reply_markup=reddit_keyboard(draft_id, app_link, browser_link))
         self.store.set_reddit(draft_id, reddit_tg_message_id=str(sent.message_id))
         if title:
             await context.bot.send_message(self.chat_id, _tg_code_block(title)[:4000],
