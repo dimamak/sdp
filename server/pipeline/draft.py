@@ -142,6 +142,13 @@ abstract metaphor or symbolic stand-in. Rules for the prompt you write:
   at a laptop/desk" scene out of habit; reach for it only when that literally is
   the most distinctive part of today's story, and vary the framing, time of day
   and setting rather than repeating the same composition draft after draft.
+- Ground it in the post's real subject and what actually happened — not a
+  hypothetical example, mockup, quote or sample the post describes in passing as
+  something that was produced or considered. If the post mentions the *content*
+  of an example (a sample ad, a made-up headline, an illustrative scenario),
+  don't render that example's content literally and don't invent specifics (products,
+  industries, settings) it doesn't actually contain — depict the real work or
+  moment that produced it instead.
 - No text, letters, numbers or watermarks anywhere in the image; image models
   render them badly and LinkedIn readers notice. Two exceptions: (1) if the post
   names a specific company, show that company's real logo or brand mark somewhere
