@@ -251,8 +251,10 @@ Your previous attempt was:
 \"\"\"
 {prev_text}
 \"\"\"
-Problem with it: {feedback}
-Revise it to fix that. Keep everything else that worked.
+Instruction for this revision: {feedback}
+Follow that instruction exactly, even if it means replacing most or all of the
+previous attempt — e.g. if it asks to reuse the LinkedIn post, use that post's own
+wording verbatim rather than paraphrasing it again. Otherwise keep what was working.
 """
 
 
