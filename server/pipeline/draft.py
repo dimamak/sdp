@@ -432,19 +432,27 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
                          "\n".join(f"- {h}" for h in hooks) if hooks else "(none yet)"))
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
+    # Each coding-session entry in the digest is a summary, not the transcript
+    # itself, and links its own "Full transcript: <path>" line — give the model
+    # Read/Grep to actually follow those links (e.g. to pull an exact number the
+    # summary only gestured at) rather than working from the summary alone.
+    files_dir = store.files_dir
+    read_kwargs = (dict(allow_read_dirs=[str(files_dir)], allowed_tools="Read,Grep,Glob")
+                  if files_dir.exists() else {})
+
     # Rarely, the model appends a trailing thinking-only turn after already
     # answering, and `claude -p --output-format json` reports that turn's (empty)
     # text as `result` — the good answer earlier in the same response is lost to
     # us. That's non-deterministic, so a single retry on a fresh session usually
     # gets a clean answer rather than losing the whole day's draft to it.
     session_id = str(uuid.uuid4())
-    result = run_claude(cfg, prompt, timeout=1800, session_id=session_id)
+    result = run_claude(cfg, prompt, timeout=1800, session_id=session_id, **read_kwargs)
     try:
         data = extract_json(result)
     except ValueError as e:
         log.warning("write_drafts: %s — retrying once on a fresh session", e)
         session_id = str(uuid.uuid4())
-        result = run_claude(cfg, prompt, timeout=1800, session_id=session_id)
+        result = run_claude(cfg, prompt, timeout=1800, session_id=session_id, **read_kwargs)
         data = extract_json(result)
     store.set_day_session(day, session_id)
 

@@ -2,6 +2,8 @@
 
 You are given a digest of one working day: coding sessions (Claude Code transcripts), chat messages, emails, meeting notes, screenshot descriptions, call debriefs. Some content may be in Hebrew or Russian — translate insights to {LANGUAGE_OUT}.
 
+Each coding-session entry is a summary of that session, not the transcript itself, and is followed by a "Full transcript: <path>" line. You have Read/Grep/Glob on that path — use it whenever a summary gestures at something promising (a number, a result) without giving the specific detail a post needs.
+
 Your job is to find the day's most **interesting fact**, not to summarize the day's work.
 
 1. Scan the digest and list candidate FACTS — things that turned out to be true, not tasks that were completed. Hunt specifically for:

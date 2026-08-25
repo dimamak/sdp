@@ -29,6 +29,9 @@ pipeline:
                                       # reuse the same hook move night after night (one per
                                       # day, preferring that day's posted draft)
   model: claude-haiku-4-5             # model for claude -p (draft + screenshot descriptions)
+  summary_model: claude-haiku-4-5     # model that condenses each raw session transcript into
+                                      # its digest entry — cheap on purpose, runs once per
+                                      # harvested session (or growth) per night
   claude_bin: claude                  # path to the claude CLI
   language_out: English               # language of the LinkedIn post
   always_hashtags: []                 # e.g. ["buildinpublic", "AICoding"] — no leading '#'.

@@ -16,16 +16,19 @@ log = get_logger("pipeline.claude")
 
 def run_claude(cfg, prompt: str, *, allow_read_dirs: list[str] | None = None,
                timeout: int = 600, session_id: str | None = None,
-               resume: bool = False, allowed_tools: str | None = None) -> str:
+               resume: bool = False, allowed_tools: str | None = None,
+               model: str | None = None) -> str:
     """Run claude -p and return the result text.
 
     session_id + resume=False starts a named session (so it can be resumed later);
     resume=True continues that session with the full prior conversation in context.
+    `model` overrides pipeline.model for this call (e.g. a cheaper model for a
+    high-volume summarization pass).
     """
     cmd = [
         str(cfg.get("pipeline.claude_bin", "claude")),
         "-p", "--output-format", "json",
-        "--model", str(cfg.get("pipeline.model", "claude-haiku-4-5")),
+        "--model", model or str(cfg.get("pipeline.model", "claude-haiku-4-5")),
     ]
     if session_id:
         cmd += (["--resume", session_id] if resume else ["--session-id", session_id])

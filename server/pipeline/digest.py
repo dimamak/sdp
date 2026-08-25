@@ -1,10 +1,15 @@
 """Assemble the day's digest from unused store items.
 
-- Claude JSONL transcripts are compressed to: user prompts, assistant text
-  (truncated), and tool names — enough narrative for story selection.
+- Claude JSONL transcripts are reduced to user/assistant text (tool calls carry
+  no args or results in this narrative, so their names add noise, not signal —
+  dropped), then a cheap model summarizes that narrative into the digest entry.
+  The entry also links the transcript's own file path so the drafting agent can
+  Read/Grep the unabridged original when the summary isn't enough.
 - Screenshots without a summary get a one-line description via claude -p (vision
   through the Read tool), stored back on the item so it's done once.
-- Everything is capped: per item and total.
+- Per-item length is a summarization target, not a slice. If the total digest
+  still overflows its cap, the oldest entries are dropped first (not just
+  whatever source sorts last alphabetically).
 """
 from __future__ import annotations
 
@@ -66,7 +71,28 @@ def _in_window(rec: dict, since: datetime | None) -> bool:
         return True
 
 
-def _compress_jsonl(path: Path, per_item_cap: int, since: datetime | None = None) -> str:
+# Safety bound on what gets sent to the summarizer model, independent of any
+# digest sizing config — protects a single pathological session (huge tool
+# output pasted into an assistant message, say) from blowing the call's context.
+_NARRATIVE_SAFETY_CAP = 150_000
+
+SESSION_SUMMARY_PROMPT = """Below is a coding-agent work session transcript (user
+prompts and assistant text; tool calls are omitted). Summarize what actually
+happened — what was investigated, and any concrete numbers, findings, or
+conclusions reached, not just what was attempted. If the session found nothing
+noteworthy (routine chores, a dead end, no real result), say that plainly in one
+line instead of padding.
+
+Write dense prose, not a bulleted recap. Stay under {cap} characters.
+
+Transcript:
+\"\"\"
+{narrative}
+\"\"\"
+"""
+
+
+def _compress_jsonl(path: Path, since: datetime | None = None) -> str:
     """Reduce a Claude Code session transcript to a readable narrative,
     keeping only messages written within the harvest window."""
     if not path.exists():
@@ -96,8 +122,6 @@ def _compress_jsonl(path: Path, per_item_cap: int, since: datetime | None = None
                             continue
                         if role == "assistant" and block.get("type") == "text" and block.get("text", "").strip():
                             lines_out.append(f"ASSISTANT: {block['text'].strip()[:400]}")
-                        elif role == "assistant" and block.get("type") == "tool_use":
-                            lines_out.append(f"  [tool: {block.get('name')}]")
                         elif role == "user" and block.get("type") == "text" and str(block.get("text", "")).strip():
                             t = str(block["text"]).strip()
                             if not t.startswith(("<command-name>", "<local-command", "Caveat:", "<system-reminder>")):
@@ -109,7 +133,23 @@ def _compress_jsonl(path: Path, per_item_cap: int, since: datetime | None = None
         return ""  # touched file, but nothing said inside the window
     header = f"(project: {cwd or path.name}, branch: {branch or '?'})"
     text = header + "\n" + "\n".join(lines_out)
-    return text[:per_item_cap]
+    return text[:_NARRATIVE_SAFETY_CAP]
+
+
+def _summarize_session(cfg, narrative: str, cap: int) -> str:
+    """Dense summary of a session's in-window narrative via a cheap model.
+
+    Falls back to a raw head-slice of the narrative on any failure — losing the
+    density but never losing the item outright over a transient model error.
+    """
+    model = str(cfg.get("pipeline.summary_model", "claude-haiku-4-5"))
+    prompt = SESSION_SUMMARY_PROMPT.format(narrative=narrative, cap=cap)
+    try:
+        summary = run_claude(cfg, prompt, model=model, timeout=300).strip()
+    except Exception as e:
+        log.warning("session summary failed (%s) — falling back to raw excerpt", e)
+        return narrative[:cap]
+    return summary[:cap] if summary else narrative[:cap]
 
 
 def describe_screenshots(cfg, store, items) -> None:
@@ -140,6 +180,17 @@ def describe_screenshots(cfg, store, items) -> None:
             store.set_item_summary(item["id"], desc)
 
 
+def _render_digest(day: str, entries: list[tuple[str, str, str]]) -> str:
+    """entries: (ts, source, entry_text). Grouped by source, source names sorted —
+    the ordering within a source no longer matters for cap purposes since that's
+    decided before this is called, so this only controls final readability."""
+    parts = [f"# Work digest for {day}\n"]
+    for src in sorted({src for _, src, _ in entries}):
+        parts.append(f"\n## Source: {src}\n")
+        parts.extend(text for ts, s, text in entries if s == src)
+    return "\n".join(parts)
+
+
 def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
     """Returns (digest markdown, item ids included)."""
     since_iso = window_start_iso(cfg)
@@ -155,18 +206,20 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
     total_cap = int(cfg.get("pipeline.digest_max_chars", 400000))
 
     window_start = datetime.fromisoformat(since_iso)
-    sections: dict[str, list[str]] = {}
+    entries: list[tuple[str, str, str]] = []
     ids: list[int] = []
     skipped_stale = 0
     for item in items:
         ids.append(item["id"])
         src = item["source"]
         if item["kind"] == "claude_jsonl":
-            body = _compress_jsonl(Path(item["path"]), per_item_cap, since=window_start)
-            if not body:
+            path = item["path"]
+            narrative = _compress_jsonl(Path(path), since=window_start)
+            if not narrative:
                 skipped_stale += 1
                 continue
-            entry = f"### Coding session ({src})\n{body}"
+            body = _summarize_session(cfg, narrative, per_item_cap)
+            entry = f"### Coding session ({src})\nFull transcript: {path}\n{body}"
         elif item["kind"] == "screenshot":
             entry = f"- Screenshot: {item['summary'] or Path(item['path'] or '').name}"
         elif item["kind"] == "activity_log":
@@ -188,16 +241,26 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
             meta = json.loads(item["meta_json"]) if item["meta_json"] else {}
             prefix = f"[{meta.get('chat')}] " if meta.get("chat") else ""
             entry = f"- {prefix}{body}"
-        sections.setdefault(src, []).append(entry)
+        entries.append((item["ts"] or "", src, entry))
 
-    parts = [f"# Work digest for {day}\n"]
-    for src in sorted(sections):
-        parts.append(f"\n## Source: {src}\n")
-        parts.extend(sections[src])
     if skipped_stale:
         log.info("skipped %d session file(s) touched in-window but with no messages in it",
                  skipped_stale)
-    digest = "\n".join(parts)
+
+    digest = _render_digest(day, entries)
     if len(digest) > total_cap:
-        digest = digest[:total_cap] + "\n\n[digest truncated at size cap]"
+        # A blind tail-slice here always dropped whichever source sorted last
+        # alphabetically. Drop the least-fresh material first instead, regardless
+        # of source — item ids are still returned in full below (mark_used treats
+        # "considered this run" the same as "made the cut", matching the existing
+        # skipped_stale items above).
+        by_age = sorted(entries, key=lambda e: e[0])
+        dropped = 0
+        while by_age and len(_render_digest(day, by_age)) > total_cap:
+            by_age.pop(0)
+            dropped += 1
+        digest = _render_digest(day, by_age)
+        digest += f"\n\n[digest truncated at size cap: dropped {dropped} oldest item(s) of {len(entries)}]"
+        log.warning("digest for %s hit the %d-char cap — dropped %d/%d item(s)",
+                    day, total_cap, dropped, len(entries))
     return digest, ids
