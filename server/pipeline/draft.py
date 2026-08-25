@@ -144,9 +144,12 @@ abstract metaphor or symbolic stand-in. Rules for the prompt you write:
   and setting rather than repeating the same composition draft after draft.
 - Ground it in the post's real subject and what actually happened — not a
   hypothetical example, mockup, quote or sample the post describes in passing as
-  something that was produced or considered. If the post mentions the *content*
-  of an example (a sample ad, a made-up headline, an illustrative scenario),
-  don't render that example's content literally and don't invent specifics (products,
+  something that was produced or considered, and not a different, easier-to-draw
+  industry or business than the post's own. You know what this business actually
+  does from the day's material; use that, don't substitute a generic retail/craft
+  stand-in because it photographs better. If the post mentions the *content* of
+  an example (a sample ad, a made-up headline, an illustrative scenario), don't
+  render that example's content literally and don't invent specifics (products,
   industries, settings) it doesn't actually contain — depict the real work or
   moment that produced it instead.
 - No text, letters, numbers or watermarks anywhere in the image; image models
@@ -184,6 +187,19 @@ with a rule above (e.g. it asks for specific words in the image), the feedback
 wins. Keep everything they didn't complain about.
 """
 
+IMAGE_BRIEF_VARY = """
+Your most recent prompt for this same post was:
+\"\"\"
+{prev_prompt}
+\"\"\"
+No specific complaint this time — the user just tapped Regenerate for a fresh
+take. Pick a genuinely different concrete angle on the story than that one AND
+than any other prompt you wrote earlier in this conversation: a different
+moment, object or setting, not a small variation on the same composition (e.g.
+don't just re-frame the same scene or swap what's on the table — find a
+different scene entirely).
+"""
+
 
 def image_brief(cfg, day: str, session_id: str | None, post_text: str,
                 feedback: str | None = None,
@@ -201,6 +217,8 @@ def image_brief(cfg, day: str, session_id: str | None, post_text: str,
     if feedback:
         extra = IMAGE_BRIEF_REVISION.format(prev_prompt=prev_prompt or "(not recorded)",
                                             feedback=feedback)
+    elif prev_prompt:
+        extra = IMAGE_BRIEF_VARY.format(prev_prompt=prev_prompt)
     style = str(cfg.get("image.style_suffix", "") or "").strip() or "no particular house style"
     prompt = IMAGE_BRIEF_PROMPT.format(day=day, post_text=post_text, extra=extra, style=style)
 
