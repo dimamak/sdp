@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Social Daily Poster — a daily post, from what you actually did</title>
-<meta name="description" content="Social Daily Poster turns your coding-agent sessions, messages, and calls into a nightly draft post you approve with one tap — LinkedIn, X, and Reddit. Runs on your own machine.">
+<title>Social Daily Poster: a daily post, from what you actually did</title>
+<meta name="description" content="Social Daily Poster turns your coding-agent sessions, messages, and calls into a nightly draft post you approve with one tap. LinkedIn, X, and Reddit, all running on your own machine.">
 <style>
   :root {
-    --bg: #0b0d12;
-    --bg-alt: #12151c;
-    --card: #161a23;
-    --border: #262b38;
-    --text: #e7e9ee;
-    --text-dim: #9aa2b1;
-    --accent: #6ee7b7;
-    --accent-2: #7dd3fc;
+    --bg: #ffffff;
+    --bg-alt: #f6f8fb;
+    --card: #ffffff;
+    --border: #e3e8ef;
+    --text: #14181f;
+    --text-dim: #5b6472;
+    --accent: #059669;
+    --accent-ink: #ffffff;
+    --accent-2: #2563eb;
     --radius: 12px;
     --max: 880px;
   }
@@ -54,14 +55,16 @@
     padding: 88px 0 64px;
     text-align: center;
     border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 100%);
   }
   .eyebrow {
     display: inline-block;
     font-size: 0.78rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-dim);
-    border: 1px solid var(--border);
+    color: var(--accent);
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
     border-radius: 999px;
     padding: 5px 14px;
     margin-bottom: 24px;
@@ -89,12 +92,13 @@
   }
   .btn-primary {
     background: var(--accent);
-    color: #06251c;
+    color: var(--accent-ink);
   }
   .btn-primary:hover { text-decoration: none; filter: brightness(1.08); }
   .btn-ghost {
     border: 1px solid var(--border);
     color: var(--text);
+    background: var(--bg);
   }
   .btn-ghost:hover { text-decoration: none; border-color: var(--accent-2); }
 
@@ -118,10 +122,11 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 28px;
+    box-shadow: 0 1px 2px rgba(20, 24, 31, 0.04);
   }
   .ps-card h3 { margin: 0 0 10px; font-size: 1.05rem; }
   .ps-card p { color: var(--text-dim); margin: 0; }
-  .ps-card.problem h3::before { content: "✕ "; color: #f87171; }
+  .ps-card.problem h3::before { content: "✕ "; color: #dc2626; }
   .ps-card.solution h3::before { content: "✓ "; color: var(--accent); }
 
   .grid-3 {
@@ -135,6 +140,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 22px;
+    box-shadow: 0 1px 2px rgba(20, 24, 31, 0.04);
   }
   .feature h3 { margin: 0 0 8px; font-size: 1rem; }
   .feature p { margin: 0; color: var(--text-dim); font-size: 0.95rem; }
@@ -146,6 +152,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 22px;
+    box-shadow: 0 1px 2px rgba(20, 24, 31, 0.04);
   }
   .platform .tag {
     display: inline-block;
@@ -172,19 +179,19 @@
     border-bottom: 1px solid var(--border);
     font-size: 0.92rem;
   }
-  th { color: var(--text-dim); font-weight: 600; }
+  th { color: var(--text-dim); font-weight: 600; background: var(--bg-alt); }
   tr:last-child td { border-bottom: none; }
 
   .quickstart-note {
-    background: var(--card);
-    border: 1px solid var(--border);
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
     border-left: 3px solid var(--accent);
     border-radius: var(--radius);
     padding: 18px 22px;
     margin-bottom: 24px;
   }
-  .quickstart-note p { margin: 0; color: var(--text-dim); }
-  .quickstart-note strong { color: var(--text); }
+  .quickstart-note p { margin: 0; color: #065f46; }
+  .quickstart-note strong { color: #064e3b; }
 
   footer {
     padding: 48px 0 72px;
@@ -201,11 +208,11 @@
 <header class="hero">
   <div class="wrap">
     <span class="eyebrow">Social Daily Poster · Open source · MIT licence</span>
-    <h1>Nobody has the time — or the will —<br>to <span class="accent">post every day.</span></h1>
+    <h1>Nobody has the time, or the will,<br>to <span class="accent">post every day.</span></h1>
     <p class="lede">
-      Social Daily Poster looks back at what you actually did today — coding sessions,
-      messages, calls — picks the best story, and drafts a post. You approve
-      it with one tap. Nothing goes out without you.
+      Social Daily Poster looks back at what you actually did today: coding
+      sessions, messages, calls. It picks the best story and drafts a post.
+      You approve it with one tap. Nothing goes out without you.
     </p>
     <div class="cta-row">
       <a class="btn btn-primary" href="https://github.com/dimamak/sdp#quickstart">Get started</a>
@@ -222,15 +229,15 @@
         <p>
           Staying visible on LinkedIn means writing something worth reading,
           every single day. Most people have neither the spare time nor the
-          patience for it — so posting quietly stops.
+          patience for it, so posting quietly stops.
         </p>
       </div>
       <div class="ps-card solution">
         <h3>The fix</h3>
         <p>
-          Social Daily Poster writes the first draft for you, from your actual day —
-          not a blank box and a blinking cursor. You just read it, tap
-          approve, and it's live.
+          Social Daily Poster writes the first draft for you, from your
+          actual day, not a blank box and a blinking cursor. You just read
+          it, tap approve, and it's live.
         </p>
       </div>
     </div>
@@ -241,14 +248,14 @@
   <div class="wrap">
     <h2>What it does</h2>
     <p class="section-lede">
-      Every night, Social Daily Poster reviews your day, picks one real story, and
-      drafts a post from it — then waits for you.
+      Every night, Social Daily Poster reviews your day, picks one real
+      story, and drafts a post from it. Then it waits for you.
     </p>
     <div class="grid-3">
       <div class="feature">
         <h3>Reads your real day</h3>
         <p>Coding-agent sessions, screenshots, messages, even a spoken
-          debrief you record after a call — all optional, all off by
+          debrief you record after a call. All optional, all off by
           default.</p>
       </div>
       <div class="feature">
@@ -260,7 +267,7 @@
       <div class="feature">
         <h3>One tap, and it's done</h3>
         <p>Nothing reaches LinkedIn, X, or Reddit until you've seen the
-          exact text — and for LinkedIn, the exact image.</p>
+          exact text, and for LinkedIn, the exact image.</p>
       </div>
     </div>
   </div>
@@ -270,28 +277,28 @@
   <div class="wrap">
     <h2>What it posts to</h2>
     <p class="section-lede">
-      One story, adapted for each platform's own voice and length — not
+      One story, adapted for each platform's own voice and length, not
       copy-pasted three times.
     </p>
     <div class="platforms">
       <div class="platform">
         <span class="tag">Core flow</span>
         <h3>LinkedIn</h3>
-        <p>The official <code>w_member_social</code> API. Draft → approve →
-          optional illustration → post.</p>
+        <p>The official <code>w_member_social</code> API. Draft, approve,
+          optional illustration, post.</p>
       </div>
       <div class="platform">
         <span class="tag">Optional</span>
         <h3>X</h3>
-        <p>A genuine rewrite for X's shorter format (not a truncation), with
-          its own Approve / Rewrite / Skip step. Official API.</p>
+        <p>A real rewrite sized for X's shorter limit, with its own
+          Approve / Rewrite / Skip step.</p>
       </div>
       <div class="platform">
         <span class="tag">Optional</span>
         <h3>Reddit</h3>
         <p>Reddit has no workable posting API for a project like this, so
-          Social Daily Poster hands you a prefilled submit link and ready-to-paste
-          text — you tap submit yourself.</p>
+          Social Daily Poster hands you a prefilled submit link and
+          ready-to-paste text, and you tap submit yourself.</p>
       </div>
     </div>
   </div>
@@ -304,18 +311,18 @@
     <div class="grid-3">
       <div class="feature">
         <h3>Nothing leaves without you</h3>
-        <p>In laptop mode, everything stays local except the exact text (and
-          image) you tap to approve.</p>
+        <p>In laptop mode, everything stays local except the exact text
+          (and image) you tap to approve.</p>
       </div>
       <div class="feature">
         <h3>Costs close to $0</h3>
         <p>Drafting rides on the Claude Code or ChatGPT subscription you
-          already pay for — not a metered API.</p>
+          already pay for.</p>
       </div>
       <div class="feature">
         <h3>Real APIs, not workarounds</h3>
-        <p>LinkedIn and X post through their official, sanctioned APIs — no
-          shortcuts that risk your account.</p>
+        <p>LinkedIn and X post through their official, sanctioned APIs.
+          No shortcuts that risk your account.</p>
       </div>
     </div>
   </div>
@@ -326,11 +333,11 @@
     <h2>Cost</h2>
     <table>
       <tr><th>Item</th><th>Marginal cost</th></tr>
-      <tr><td>Drafting, rewrites, image briefs</td><td>~$0 — runs through your existing CLI subscription</td></tr>
-      <tr><td>LinkedIn publishing</td><td>$0 — official API</td></tr>
+      <tr><td>Drafting, rewrites, image briefs</td><td>~$0, runs through your existing CLI subscription</td></tr>
+      <tr><td>LinkedIn publishing</td><td>$0 (official API)</td></tr>
       <tr><td>Post illustrations <em>(optional)</em></td><td>~$0.13–0.24/render</td></tr>
       <tr><td>X posting <em>(optional)</em></td><td>Well under $1/month at one post a day</td></tr>
-      <tr><td>Reddit <em>(optional)</em></td><td>$0 — no API, you submit it yourself</td></tr>
+      <tr><td>Reddit <em>(optional)</em></td><td>$0, no API, you submit it yourself</td></tr>
     </table>
   </div>
 </section>
@@ -343,8 +350,8 @@
         Code or Codex in an empty folder and say something like
         <em>"clone github.com/dimamak/sdp and set it up locally for
         one person, walking me through the wizard."</em> The wizard still
-        asks you things directly (a Telegram bot token, a LinkedIn login) —
-        the agent just drives the install and relays each question.</p>
+        asks you things directly, like a Telegram bot token or a LinkedIn
+        login. The agent just drives the install and relays each question.</p>
     </div>
     <pre><code>git clone https://github.com/dimamak/sdp.git && cd sdp
 python3 -m venv .venv
@@ -359,7 +366,7 @@ python3 -m venv .venv
 
 <footer>
   <div class="wrap">
-    <p>MIT licensed · built for people who'd rather do the work than write about it</p>
+    <p>MIT licensed, built for people who'd rather do the work than write about it</p>
     <div>
       <a href="https://github.com/dimamak/sdp">GitHub</a>
       <a href="https://github.com/dimamak/sdp#readme">README</a>

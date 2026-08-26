@@ -1,50 +1,51 @@
 # Social Daily Poster
 
-Nobody has the time — or the will — to sit down and write a post every day.
+Nobody has the time, or the will, to sit down and write a post every day.
 Social Daily Poster does it for you, from what you actually did that day.
 
 ## What it does
 
-Every night, Social Daily Poster looks back at your day — your coding-agent sessions
-(Claude Code or Codex/ChatGPT), screenshots, and optionally your Telegram,
-Gmail, WhatsApp, and even a spoken debrief you record after a call — picks
-the single best story, and drafts a post. That draft lands in a private
-Telegram bot with **Approve / Edit / Skip** buttons. Approve also draws an
-illustration and shows it to you before anything is public — **nothing posts
-until a second tap.**
+Every night, Social Daily Poster looks back at your day: your coding-agent
+sessions (Claude Code or Codex/ChatGPT), screenshots, and optionally your
+Telegram, Gmail, WhatsApp, and even a spoken debrief you record after a call.
+It picks the single best story and drafts a post. That draft lands in a
+private Telegram bot with **Approve / Edit / Skip** buttons. Approve also
+draws an illustration and shows it to you before anything is public.
+**Nothing posts until a second tap.**
 
-Once that post is live on LinkedIn, Social Daily Poster can spin off the same story for
-**X** (a real rewrite, not a truncation) and **Reddit** (a prefilled link you
-submit yourself), each with its own approval step and its own on/off switch.
+Once that post is live on LinkedIn, Social Daily Poster can spin off the same
+story for **X** (a real rewrite, not a truncation) and **Reddit** (a
+prefilled link you submit yourself), each with its own approval step and its
+own on/off switch.
 
-Runs on one laptop for one person — no server needed, and the main way most
-people use it — or on a shared server for a few people.
+Runs on one laptop for one person, no server needed. That's how most people
+use it. It can also run on a shared server for a few people.
 
 ## Why it's good
 
-- **Posts come from what you actually did**, not a blank-box prompt — reads
-  like your week, not like content marketing.
+- **Posts come from what you actually did.** They read like your week,
+  written in your voice.
 - **Never auto-publishes, on any platform.** Every channel needs an explicit
   tap after you've seen the exact text (and, for LinkedIn, the exact image).
 - **Runs on your own machine.** In laptop mode nothing leaves it except what
   you explicitly approve for posting.
 - **Costs close to $0.** Drafting rides on the Claude Code or ChatGPT
-  subscription you already pay for, not a metered API — see [Cost](#cost).
-- **Posts through real, official APIs** — LinkedIn and X, not a workaround
-  that risks your account. Reddit doesn't have a workable automated-posting
-  API for a personal project right now, so Social Daily Poster is honest about that
-  instead of faking it — see [What it posts to](#what-it-posts-to).
+  subscription you already pay for (see [Cost](#cost)).
+- **Posts through real, official APIs**: LinkedIn and X, not a workaround
+  that risks your account. Reddit has no workable automated-posting API for
+  a personal project right now, and this README says so plainly (see
+  [What it posts to](#what-it-posts-to)).
 
 ## Quickstart
 
 **Fastest: hand it to a coding agent.** If you already use a terminal-based
 agent (Claude Code, Codex, etc.), open it in an empty folder and say
 something like: *"clone `https://github.com/dimamak/sdp` and set it up
-locally for one person, walking me through the wizard."* The wizard is interactive by
-design — you'll still need to answer things yourself, like pasting a
-Telegram bot token or approving a LinkedIn login in your browser — but the
-agent can drive the whole install and relay each question to you as it
-comes up.
+locally for one person, walking me through the wizard."* The wizard is
+interactive by design: you'll still need to answer things yourself, like
+pasting a Telegram bot token or approving a LinkedIn login in your browser.
+But the agent can drive the whole install and relay each question to you as
+it comes up.
 
 **Or run it yourself** (works on Windows, macOS, Linux):
 
@@ -56,7 +57,7 @@ python3 -m venv .venv
 ```
 
 The wizard walks through: which sessions to harvest, your Telegram bot, and
-— all optional — Gmail/WhatsApp/LinkedIn/images/X/Reddit. Every step is
+(all optional) Gmail/WhatsApp/LinkedIn/images/X/Reddit. Every step is
 re-runnable on its own, e.g. `python -m setup.wizard --source linkedin`.
 When it's done:
 
@@ -66,7 +67,7 @@ python -m server.bot.main                         # leave this running
 ```
 
 That one process polls Telegram for your taps and schedules the nightly
-draft itself — no cron, nothing else to install. `python -m setup.wizard
+draft itself: no cron, nothing else to install. `python -m setup.wizard
 --doctor` checks your setup any time.
 
 Want a shared, always-on server for a few people instead of one laptop? See
@@ -86,16 +87,16 @@ has the full field-by-field detail as inline comments.
 
 ## What it posts to
 
-- **LinkedIn** — the official `w_member_social` API. This is the core flow:
+- **LinkedIn**: the official `w_member_social` API. This is the core flow:
   draft → approve → optional illustration → post.
-- **X** *(optional, `x.enabled`)* — once a post is live on LinkedIn, the same
+- **X** *(optional, `x.enabled`)*: once a post is live on LinkedIn, the same
   day's story gets a genuine X-length rewrite (LinkedIn drafts run
   1,100–1,600 characters; X's default cap is 280), with its own
   Approve/Rewrite/Skip step. Uses X's official API.
-- **Reddit** *(optional, `reddit.enabled`)* — Reddit closed off practical API
-  access for a project like this, so instead of faking automation, Social
-  Daily Poster hands you a prefilled submit link and ready-to-paste title/body — you
-  review it and tap Submit yourself. Nothing is ever posted by code.
+- **Reddit** *(optional, `reddit.enabled`)*: Reddit closed off practical API
+  access for a project like this. Social Daily Poster hands you a prefilled
+  submit link and ready-to-paste title and body, and you review it and tap
+  Submit yourself. Nothing is ever posted by code.
 
 Skipping or failing a later step (X, Reddit) never touches a post already
 made on an earlier one. See [Cost](#cost) for what each channel actually
@@ -103,7 +104,7 @@ costs to run.
 
 ## Images
 
-Approve doesn't publish right away — it first asks the *same session that
+Approve doesn't publish right away. It first asks the *same session that
 wrote the post* for an image brief, renders it, and sends it back with
 **Post with image · Regenerate · Post text-only · Cancel**. Reply to steer it
 ("more abstract, no people") and each reply is a new take; regenerating never
@@ -120,10 +121,10 @@ most.
 - The drafting/rewrite step runs the LLM in a restricted mode with no
   general file or tool access.
 - WhatsApp capture is read-only by design.
-- Audio is transcribed locally and the recording is deleted once the
-  transcript exists — the raw audio never persists.
+- Audio is transcribed locally, and the recording is deleted once the
+  transcript exists. The raw audio never persists.
 - Recording other people's conversations has privacy implications of its
-  own — don't quote anyone identifiably in a public post (the default style
+  own: don't quote anyone identifiably in a public post (the default style
   guide already forbids it).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) if you want the exact sandboxing
@@ -133,11 +134,11 @@ mechanics behind the Claude vs. Codex backends.
 
 | Item | Marginal cost |
 |---|---|
-| Drafting, image briefs, X/Reddit rewrites, session summaries | ~$0 — runs through your existing Claude Code or ChatGPT/Codex subscription's CLI, not a metered API (an API key also works if you'd rather pay per-token) |
-| LinkedIn publishing | $0 — official API |
+| Drafting, image briefs, X/Reddit rewrites, session summaries | ~$0; runs through your existing Claude Code or ChatGPT/Codex subscription's CLI (an API key also works if you'd rather pay per-token) |
+| LinkedIn publishing | $0 (official API) |
 | Post illustrations *(optional)* | ~$0.13–0.24/render; `image.enabled: false` skips this entirely |
-| X posting *(optional)* | Pay-per-use, no free tier — well under $1/month at one post a day |
-| Reddit *(optional)* | $0 — no API, no account; it's a link you submit yourself |
+| X posting *(optional)* | Pay-per-use, no free tier; well under $1/month at one post a day |
+| Reddit *(optional)* | $0; no API or account, just a link you submit yourself |
 
 At one post a day with images on, expect low-single-digit dollars a month.
 
@@ -153,12 +154,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m setup.wizard --doctor
 ```
 
-Each additional person gets their own instance — separate config, secrets,
-store, Telegram bot, and LinkedIn token — via
+Each additional person gets their own instance: separate config, secrets,
+store, Telegram bot, and LinkedIn token, via
 `.venv/bin/python -m setup.wizard --instance alice`. People can share one
 LinkedIn or X App's credentials the same way a team shares any App: whoever
 sets it up first pastes the client id/secret, everyone else just runs their
-own login to get their own token — see the wizard's `linkedin`/`x` steps.
+own login to get their own token (see the wizard's `linkedin`/`x` steps).
 
 Full walkthrough (cron, systemd, Windows laptop push, CI auto-deploy) lives
 in [docs/self-hosting/ci-deploy.md](docs/self-hosting/ci-deploy.md) and the
@@ -169,11 +170,11 @@ wizard's own prompts.
 - **Only local coding-agent history is read.** Codex Cloud tasks and the
   plain ChatGPT web/desktop chat tab aren't in the local session store, so
   they aren't harvested.
-- **WhatsApp carries real, if low, ToS/ban risk** — it goes through an
+- **WhatsApp carries real, if low, ToS/ban risk**: it goes through an
   unofficial client, not WhatsApp's Business API. Read-only by design.
-- **Reddit is draft-assist only, never automated posting** — see
-  [What it posts to](#what-it-posts-to).
-- **Call/office audio recording is Windows-only today** — the recorder
+- **Reddit is draft-assist only, never automated posting** (see
+  [What it posts to](#what-it-posts-to)).
+- **Call/office audio recording is Windows-only today**: the recorder
   scripts have no macOS/Linux equivalent yet. Transcription itself runs on
   any OS once audio reaches the server.
 - **Laptop mode has no OS-level autostart.** `python -m server.bot.main`
@@ -183,6 +184,6 @@ wizard's own prompts.
 ## Contributing / Security / Licence
 
 - Found a bug or want a feature? See [CONTRIBUTING.md](CONTRIBUTING.md).
-- Found a security issue? See [SECURITY.md](SECURITY.md) — please don't open
+- Found a security issue? See [SECURITY.md](SECURITY.md). Please don't open
   a public issue for anything that touches credentials or account safety.
 - [LICENSE](LICENSE): MIT.
