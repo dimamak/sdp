@@ -34,7 +34,7 @@ available).
   deletes, so `instances/`, `data/`, `logs/`, `.venv`, `config.yaml`, `.env`
   are untouched (none of them are tracked in git, so they're never part of
   the payload in the first place).
-- The deploy job is gated to `github.repository == 'dimamak/dailypost'` so
+- The deploy job is gated to `github.repository == 'dimamak/sdp'` so
   forks don't get a red X from missing secrets on every push.
 - Setting this up for a new server: see
   [../self-hosting/ci-deploy.md](../self-hosting/ci-deploy.md).

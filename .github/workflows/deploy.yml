@@ -14,7 +14,7 @@ on:
 
 jobs:
   deploy:
-    if: github.repository == 'dimamak/dailypost'
+    if: github.repository == 'dimamak/sdp'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

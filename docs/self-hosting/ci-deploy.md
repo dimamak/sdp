@@ -70,7 +70,7 @@ of hardcoding a personal server's address in a public workflow file.
 
 ## 5. Point the workflow at your fork
 
-`.github/workflows/deploy.yml` only runs on `dimamak/dailypost` (so forks
+`.github/workflows/deploy.yml` only runs on `dimamak/sdp` (so forks
 don't get a failing Action from missing secrets on every push). If you're
 running your own fork, change that `if:` condition to your `owner/repo`.
 

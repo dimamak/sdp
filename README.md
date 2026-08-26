@@ -39,8 +39,8 @@ people use it — or on a shared server for a few people.
 
 **Fastest: hand it to a coding agent.** If you already use a terminal-based
 agent (Claude Code, Codex, etc.), open it in an empty folder and say
-something like: *"clone `<this repo>` and set it up locally for one
-person, walking me through the wizard."* The wizard is interactive by
+something like: *"clone `https://github.com/dimamak/sdp` and set it up
+locally for one person, walking me through the wizard."* The wizard is interactive by
 design — you'll still need to answer things yourself, like pasting a
 Telegram bot token or approving a LinkedIn login in your browser — but the
 agent can drive the whole install and relay each question to you as it
@@ -49,7 +49,7 @@ comes up.
 **Or run it yourself** (works on Windows, macOS, Linux):
 
 ```bash
-git clone <this repo> && cd <repo>
+git clone https://github.com/dimamak/sdp.git && cd sdp
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip
 .venv/bin/python -m setup.wizard                 # mode? -> laptop (the default)
@@ -147,7 +147,7 @@ For an always-on shared box instead of a laptop, with a separate laptop
 feeding it over SSH:
 
 ```bash
-git clone <this repo> && cd <repo>
+git clone https://github.com/dimamak/sdp.git && cd sdp
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m setup.wizard        # mode? -> server
 .venv/bin/python -m setup.wizard --doctor
