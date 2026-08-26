@@ -166,7 +166,7 @@ class XClient:
         return r.json()["data"].get("subscription_type")
 
 
-TEST_POST_TEXT = "dailypost self-test (ignore) — deleting this in a second."
+TEST_POST_TEXT = "Social Daily Poster self-test (ignore) — deleting this in a second."
 
 
 def main(argv=None) -> int:

@@ -1,11 +1,11 @@
-# dailypost
+# Social Daily Poster
 
 Nobody has the time — or the will — to sit down and write a post every day.
-dailypost does it for you, from what you actually did that day.
+Social Daily Poster does it for you, from what you actually did that day.
 
 ## What it does
 
-Every night, dailypost looks back at your day — your coding-agent sessions
+Every night, Social Daily Poster looks back at your day — your coding-agent sessions
 (Claude Code or Codex/ChatGPT), screenshots, and optionally your Telegram,
 Gmail, WhatsApp, and even a spoken debrief you record after a call — picks
 the single best story, and drafts a post. That draft lands in a private
@@ -13,7 +13,7 @@ Telegram bot with **Approve / Edit / Skip** buttons. Approve also draws an
 illustration and shows it to you before anything is public — **nothing posts
 until a second tap.**
 
-Once that post is live on LinkedIn, dailypost can spin off the same story for
+Once that post is live on LinkedIn, Social Daily Poster can spin off the same story for
 **X** (a real rewrite, not a truncation) and **Reddit** (a prefilled link you
 submit yourself), each with its own approval step and its own on/off switch.
 
@@ -32,7 +32,7 @@ people use it — or on a shared server for a few people.
   subscription you already pay for, not a metered API — see [Cost](#cost).
 - **Posts through real, official APIs** — LinkedIn and X, not a workaround
   that risks your account. Reddit doesn't have a workable automated-posting
-  API for a personal project right now, so dailypost is honest about that
+  API for a personal project right now, so Social Daily Poster is honest about that
   instead of faking it — see [What it posts to](#what-it-posts-to).
 
 ## Quickstart
@@ -93,8 +93,8 @@ has the full field-by-field detail as inline comments.
   1,100–1,600 characters; X's default cap is 280), with its own
   Approve/Rewrite/Skip step. Uses X's official API.
 - **Reddit** *(optional, `reddit.enabled`)* — Reddit closed off practical API
-  access for a project like this, so instead of faking automation, dailypost
-  hands you a prefilled submit link and ready-to-paste title/body — you
+  access for a project like this, so instead of faking automation, Social
+  Daily Poster hands you a prefilled submit link and ready-to-paste title/body — you
   review it and tap Submit yourself. Nothing is ever posted by code.
 
 Skipping or failing a later step (X, Reddit) never touches a post already

@@ -402,7 +402,7 @@ def step_telegram(data: dict) -> None:
         # device_model/system_version show up in Telegram's active-sessions list
         # and in the "new login" alert — make it obvious what this is
         with TelegramClient(session_file, int(env_get("TG_API_ID")), env_get("TG_API_HASH"),
-                            device_model="dailypost harvester",
+                            device_model="Social Daily Poster harvester",
                             system_version="read-only") as c:
             me = c.get_me()
             ok(f"logged in as {me.first_name} (id {me.id})")
@@ -939,7 +939,7 @@ def step_systemd(data: dict) -> None:
 # ---------- doctor -------------------------------------------------------------
 
 def doctor() -> int:
-    print("== dailypost doctor ==")
+    print("== Social Daily Poster doctor ==")
     failures = 0
 
     def check(name, fn):
@@ -1365,7 +1365,7 @@ def main(argv=None) -> int:
         # A laptop is single-person, single-instance by definition — never ask
         # "who is this setup for?" in that case, and never offer server-only
         # steps (cron, systemd, SSH pairing) below.
-        print("=== dailypost setup wizard ===")
+        print("=== Social Daily Poster setup wizard ===")
         mode_default = "laptop"
         try:
             existing = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8")) or {}

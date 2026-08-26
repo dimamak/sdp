@@ -1,11 +1,11 @@
 ---
 name: Feature request
-about: Suggest an idea for dailypost
+about: Suggest an idea for Social Daily Poster
 title: ""
 labels: enhancement
 ---
 
-**What are you trying to do that dailypost doesn't support today?**
+**What are you trying to do that Social Daily Poster doesn't support today?**
 
 **What would the ideal experience look like?**
 

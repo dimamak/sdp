@@ -835,7 +835,7 @@ class Bot:
         reddit_status = ("disabled" if not self.cfg.get("reddit.enabled", False)
                          else f"r/{self.cfg.get('reddit.subreddit', 'buildinpublic')}")
         await update.message.reply_text(
-            f"dailypost alive. Items last 24h: {row['c']}. "
+            f"Social Daily Poster alive. Items last 24h: {row['c']}. "
             f"LinkedIn token: {'n/a' if days is None else f'{days}d left'}. "
             f"X: {x_status}. "
             f"Reddit: {reddit_status}. "

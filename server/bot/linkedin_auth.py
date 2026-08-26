@@ -95,7 +95,7 @@ def main(argv=None) -> int:
                     code_holder["code"] = q["code"][0]
                     self.send_response(200)
                     self.end_headers()
-                    self.wfile.write(b"dailypost: LinkedIn authorized. You can close this tab.")
+                    self.wfile.write(b"Social Daily Poster: LinkedIn authorized. You can close this tab.")
                 else:
                     self.send_response(400)
                     self.end_headers()

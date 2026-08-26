@@ -1,4 +1,4 @@
-# dailypost — instance configuration (copy to config.yaml and edit; config.yaml is git-ignored)
+# Social Daily Poster — instance configuration (copy to config.yaml and edit; config.yaml is git-ignored)
 # All paths may use ~. Secrets go in .env, never here.
 
 # laptop: everything runs on this one machine, no server, no cron/systemd — the

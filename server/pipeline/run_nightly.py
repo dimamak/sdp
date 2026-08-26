@@ -154,7 +154,7 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         return 0
 
     if not digest:
-        notify(cfg, f"🌙 dailypost: no new work items for {day} — no draft today.")
+        notify(cfg, f"🌙 Social Daily Poster: no new work items for {day} — no draft today.")
         return 0
 
     (store.dir / f"digest-{day}.md").write_text(digest, encoding="utf-8")
@@ -162,13 +162,13 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         draft_ids, rejected = write_drafts(cfg, store, day, digest)
     except Exception as e:
         log.exception("draft failed")
-        notify(cfg, f"⚠️ dailypost: draft generation failed for {day}: {e}")
+        notify(cfg, f"⚠️ Social Daily Poster: draft generation failed for {day}: {e}")
         return 1
 
     store.mark_used(item_ids, day)
 
     if not draft_ids:
-        notify(cfg, f"🌙 dailypost: harvested {sum(v for v in results.values() if v > 0)} items for {day}, "
+        notify(cfg, f"🌙 Social Daily Poster: harvested {sum(v for v in results.values() if v > 0)} items for {day}, "
                     "but nothing post-worthy today.")
         return 0
 

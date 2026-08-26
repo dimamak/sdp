@@ -282,7 +282,7 @@ class LinkedInClient:
             _fail(r, "delete")
 
 
-TEST_POST_TEXT = (r"dailypost self-test (ignore) [1] {2} <3> #selftest *x* _y_ ~z~ @ | \ "
+TEST_POST_TEXT = (r"Social Daily Poster self-test (ignore) [1] {2} <3> #selftest *x* _y_ ~z~ @ | \ "
                   "— deleting this in a second.")
 
 

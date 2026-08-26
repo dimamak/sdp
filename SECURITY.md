@@ -1,6 +1,6 @@
 # Security Policy
 
-dailypost handles credentials (LinkedIn/X tokens, Telegram bot token, API
+Social Daily Poster handles credentials (LinkedIn/X tokens, Telegram bot token, API
 keys) and reads coding-agent session transcripts, which can contain source
 code and secrets from your own projects. Please report vulnerabilities
 privately rather than in a public issue.
