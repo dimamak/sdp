@@ -9,4 +9,5 @@ google-api-python-client>=2.120
 google-auth-oauthlib>=1.2
 google-genai>=1.56
 qrcode>=7.4
+tzdata>=2024.1; sys_platform == "win32"  # zoneinfo has no system tz database to fall back to on Windows
 

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -53,7 +54,11 @@ def test_dotted_get_stops_at_non_dict_intermediate():
 def test_path_of_expands_user(tmp_path):
     cfg = Config({"store_dir": "~/dailypost-store"}, {}, tmp_path)
     p = cfg.path_of("store_dir")
-    assert str(p) == os.path.expanduser("~/dailypost-store")
+    # path_of wraps expanduser's result in Path, which normalizes separators
+    # (e.g. on Windows, expanduser leaves the un-expanded suffix's "/" as-is,
+    # but Path(...) renders the whole thing with "\") — compare as Path, not
+    # as a raw string, so the assertion doesn't depend on that normalization.
+    assert p == Path(os.path.expanduser("~/dailypost-store"))
 
 
 def test_path_of_missing_key_returns_none():
