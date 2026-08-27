@@ -348,10 +348,14 @@
     <div class="quickstart-note">
       <p><strong>Fastest:</strong> hand it to a coding agent. Open Claude
         Code or Codex in an empty folder and say something like
-        <em>"clone github.com/dimamak/sdp and set it up locally for
-        one person, walking me through the wizard."</em> The wizard still
-        asks you things directly, like a Telegram bot token or a LinkedIn
-        login. The agent just drives the install and relays each question.</p>
+        <em>"clone github.com/dimamak/sdp and set it up locally for one
+        person. Before running the wizard, ask me which channels I want:
+        Telegram and LinkedIn are required, then check whether I also want
+        Gmail, WhatsApp, images, X, or Reddit, don't just leave them off
+        by default. Then walk me through the wizard with those answers."</em>
+        The wizard still asks you things directly, like a Telegram bot token
+        or a LinkedIn login. The agent just drives the install and relays
+        each question.</p>
     </div>
     <pre><code>git clone https://github.com/dimamak/sdp.git && cd sdp
 python3 -m venv .venv

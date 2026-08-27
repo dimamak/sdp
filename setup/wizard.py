@@ -322,12 +322,17 @@ def step_llm(data: dict) -> None:
 def step_claude(data: dict) -> None:
     print("\n== Claude Code sessions ==")
     laptop = data.get("mode") == "laptop"
-    if yes("harvest a plain per-user projects dir on THIS machine?", laptop):
+    # Default the yes/no on whether the dir actually exists, same as step_llm's
+    # shutil.which() check — otherwise laptop mode always defaults this on, even
+    # for a Codex-only user with no ~/.claude, and it has to be pruned by hand.
+    have_claude_dir = Path("~/.claude/projects").expanduser().exists()
+    if yes("harvest a plain per-user projects dir on THIS machine?", laptop and have_claude_dir):
         d = ask("projects dir", "~/.claude/projects")
         upsert_source(data, {"type": "claude_projects_dir", "enabled": True,
                              "name": "claude-server-cli", "projects_dir": d})
-    if yes("harvest Codex CLI / ChatGPT desktop sessions on THIS machine?", laptop):
-        codex_default = str(Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser())
+    codex_default = str(Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser())
+    have_codex_dir = Path(codex_default).exists()
+    if yes("harvest Codex CLI / ChatGPT desktop sessions on THIS machine?", laptop and have_codex_dir):
         d = ask("Codex home dir (holds sessions/ and archived_sessions/)", codex_default)
         upsert_source(data, {"type": "codex_sessions", "enabled": True,
                              "name": "codex", "codex_home": d})
@@ -649,6 +654,10 @@ def step_linkedin(data: dict) -> None:
         print("  Create an app at https://developer.linkedin.com (products: 'Share on LinkedIn'")
         print("  + 'Sign In with LinkedIn using OpenID Connect'); add redirect URL")
         print("  http://localhost:8917/callback")
+        print("  LinkedIn requires an associated LinkedIn Page to create the app. If you")
+        print("  don't have one, use https://www.linkedin.com/company/sdp-page/ — it's a")
+        print("  placeholder page for this project, not tied to any real business, and")
+        print("  anyone setting this up is welcome to use it.")
         print("  Sharing an app with another person on this server is fine — paste")
         print("  the SAME client id/secret; the token you get is still yours alone.")
         client_id = ask("LINKEDIN_CLIENT_ID (empty = skip for now)", have_id or "")

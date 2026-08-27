@@ -41,8 +41,11 @@ use it. It can also run on a shared server for a few people.
 **Fastest: hand it to a coding agent.** If you already use a terminal-based
 agent (Claude Code, Codex, etc.), open it in an empty folder and say
 something like: *"clone `https://github.com/dimamak/sdp` and set it up
-locally for one person, walking me through the wizard."* The wizard is
-interactive by design: you'll still need to answer things yourself, like
+locally for one person. Before running the wizard, ask me which channels I
+want: Telegram and LinkedIn are required, then check whether I also want
+Gmail, WhatsApp, images, X, or Reddit, don't just leave them off by
+default. Then walk me through the wizard with those answers."* The wizard
+is interactive by design: you'll still need to answer things yourself, like
 pasting a Telegram bot token or approving a LinkedIn login in your browser.
 But the agent can drive the whole install and relay each question to you as
 it comes up.
@@ -88,7 +91,12 @@ has the full field-by-field detail as inline comments.
 ## What it posts to
 
 - **LinkedIn**: the official `w_member_social` API. This is the core flow:
-  draft → approve → optional illustration → post.
+  draft → approve → optional illustration → post. Creating the LinkedIn app
+  needs an associated LinkedIn Page; if you don't have one, use
+  [linkedin.com/company/sdp-page](https://www.linkedin.com/company/sdp-page/),
+  a placeholder page for this project that anyone setting up their own
+  instance is welcome to use. It isn't tied to any real business and has
+  nothing to do with what actually gets posted.
 - **X** *(optional, `x.enabled`)*: once a post is live on LinkedIn, the same
   day's story gets a genuine X-length rewrite (LinkedIn drafts run
   1,100–1,600 characters; X's default cap is 280), with its own
