@@ -190,7 +190,9 @@
     padding: 18px 22px;
     margin-bottom: 24px;
   }
-  .quickstart-note p { margin: 0; color: #065f46; }
+  .quickstart-note p { margin: 0 0 12px; color: #065f46; }
+  .quickstart-note p:last-child { margin-bottom: 0; }
+  .quickstart-note pre { margin: 0 0 12px; }
   .quickstart-note strong { color: #064e3b; }
 
   footer {
@@ -347,15 +349,16 @@
     <h2>Quickstart</h2>
     <div class="quickstart-note">
       <p><strong>Fastest:</strong> hand it to a coding agent. Open Claude
-        Code or Codex in an empty folder and say something like
-        <em>"clone github.com/dimamak/sdp and set it up locally for one
-        person. Before running the wizard, ask me which channels I want:
-        Telegram and LinkedIn are required, then check whether I also want
-        Gmail, WhatsApp, images, X, or Reddit, don't just leave them off
-        by default. Then walk me through the wizard with those answers."</em>
-        The wizard still asks you things directly, like a Telegram bot token
-        or a LinkedIn login. The agent just drives the install and relays
-        each question.</p>
+        Code or Codex in an empty folder and give it this:</p>
+      <pre><code>Clone https://github.com/dimamak/sdp and set it up locally for one person.
+Before running the wizard, ask me which channels I want: Telegram and
+LinkedIn are required, then check whether I also want Gmail, WhatsApp,
+images, X, or Reddit, don't just leave them off by default. If I don't have
+a LinkedIn Page, use https://www.linkedin.com/company/sdp-page/ as a
+placeholder. Then walk me through the wizard with those answers.</code></pre>
+      <p>The wizard still asks you things directly, like a Telegram bot
+        token or a LinkedIn login. The agent just drives the install and
+        relays each question.</p>
     </div>
     <pre><code>git clone https://github.com/dimamak/sdp.git && cd sdp
 python3 -m venv .venv
