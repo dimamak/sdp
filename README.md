@@ -1,7 +1,16 @@
 # Social Daily Poster
 
+[![MIT licence](https://img.shields.io/badge/licence-MIT-green.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 Nobody has the time, or the will, to sit down and write a post every day.
 Social Daily Poster does it for you, from what you actually did that day.
+
+Social Daily Poster is the open-source alternative to Taplio: it writes your
+LinkedIn posts from the work you already did, on your own machine, for the
+price of the AI subscription you already pay for.
+
+![Approving a draft in Telegram, through to it posting on LinkedIn, X, and Reddit](docs/screenshots/demo.gif)
 
 ## What it does
 
@@ -17,6 +26,15 @@ Once that post is live on LinkedIn, Social Daily Poster can spin off the same
 story for **X** (a real rewrite, not a truncation) and **Reddit** (a
 prefilled link you submit yourself), each with its own approval step and its
 own on/off switch.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/image-approve.jpg" width="220" alt="Confirming the AI-drawn illustration before it can post"><br>Confirm the illustration</td>
+<td><img src="docs/screenshots/linkedin-posted.jpg" width="220" alt="LinkedIn publish confirmation with a link to the live post"><br>LinkedIn, published</td>
+<td><img src="docs/screenshots/x-posted.jpg" width="220" alt="The same story rewritten for X and posted, with a link"><br>X, rewritten and posted</td>
+<td><img src="docs/screenshots/reddit-assist.jpg" width="220" alt="A prefilled Reddit title and body ready to paste in and submit yourself"><br>Reddit, prefilled for you to submit</td>
+</tr>
+</table>
 
 Runs on one laptop for one person, no server needed. That's how most people
 use it. It can also run on a shared server for a few people.

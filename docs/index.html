@@ -4,7 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Social Daily Poster: a daily post, from what you actually did</title>
-<meta name="description" content="Social Daily Poster turns your coding-agent sessions, messages, and calls into a nightly draft post you approve with one tap. LinkedIn, X, and Reddit, all running on your own machine.">
+<meta name="description" content="Social Daily Poster is the open-source alternative to Taplio: it writes your LinkedIn posts from the work you already did, on your own machine, for the price of the AI subscription you already pay for.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Social Daily Poster: a daily post, from what you actually did">
+<meta property="og:description" content="Social Daily Poster is the open-source alternative to Taplio: it writes your LinkedIn posts from the work you already did, on your own machine, for the price of the AI subscription you already pay for.">
+<meta property="og:url" content="https://dimamak.github.io/sdp/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Social Daily Poster: a daily post, from what you actually did">
+<meta name="twitter:description" content="Social Daily Poster is the open-source alternative to Taplio: it writes your LinkedIn posts from the work you already did, on your own machine, for the price of the AI subscription you already pay for.">
 <style>
   :root {
     --bg: #ffffff;
@@ -164,6 +171,22 @@
   }
   .platform h3 { margin: 0 0 8px; font-size: 1.05rem; }
   .platform p { margin: 0; color: var(--text-dim); font-size: 0.92rem; }
+  .platform img, .feature img {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 14px;
+    display: block;
+  }
+  .demo-gif {
+    display: block;
+    max-width: 320px;
+    width: 100%;
+    margin: 28px auto 0;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 3px rgba(20, 24, 31, 0.08);
+  }
 
   table {
     width: 100%;
@@ -216,10 +239,16 @@
       sessions, messages, calls. It picks the best story and drafts a post.
       You approve it with one tap. Nothing goes out without you.
     </p>
+    <p class="lede">
+      It's the open-source alternative to Taplio: it writes your LinkedIn
+      posts from the work you already did, on your own machine, for the
+      price of the AI subscription you already pay for.
+    </p>
     <div class="cta-row">
       <a class="btn btn-primary" href="https://github.com/dimamak/sdp#quickstart">Get started</a>
       <a class="btn btn-ghost" href="https://github.com/dimamak/sdp">View on GitHub</a>
     </div>
+    <img class="demo-gif" src="screenshots/demo.gif" alt="Approving a draft in Telegram, through to it posting on LinkedIn, X, and Reddit">
   </div>
 </header>
 
@@ -261,6 +290,7 @@
           default.</p>
       </div>
       <div class="feature">
+        <img src="screenshots/image-approve.jpg" alt="Confirming the AI-drawn illustration before anything can post">
         <h3>Drafts, doesn't publish</h3>
         <p>The draft lands in a private Telegram bot with
           Approve / Edit / Skip. Approving also draws an illustration and
@@ -284,18 +314,21 @@
     </p>
     <div class="platforms">
       <div class="platform">
+        <img src="screenshots/linkedin-posted.jpg" alt="LinkedIn publish confirmation with a link to the live post">
         <span class="tag">Core flow</span>
         <h3>LinkedIn</h3>
         <p>The official <code>w_member_social</code> API. Draft, approve,
           optional illustration, post.</p>
       </div>
       <div class="platform">
+        <img src="screenshots/x-posted.jpg" alt="The same story rewritten for X and posted, with a link">
         <span class="tag">Optional</span>
         <h3>X</h3>
         <p>A real rewrite sized for X's shorter limit, with its own
           Approve / Rewrite / Skip step.</p>
       </div>
       <div class="platform">
+        <img src="screenshots/reddit-assist.jpg" alt="A prefilled Reddit title and body ready to paste in and submit yourself">
         <span class="tag">Optional</span>
         <h3>Reddit</h3>
         <p>Reddit has no workable posting API for a project like this, so

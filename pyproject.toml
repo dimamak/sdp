@@ -1,0 +1,8 @@
+[project]
+name = "social-daily-poster"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+# Not packaged/published — this repo is run in place from a clone, per the
+# README. requires-python exists to back the version badge with something
+# checkable, not to make this pip-installable.
