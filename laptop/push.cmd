@@ -1,4 +1,8 @@
 @echo off
+REM SERVER MODE ONLY: pushes this laptop's files to a remote dailypost server
+REM over SSH. In laptop mode everything already runs here — use
+REM `python -m setup.wizard` instead, there is nothing to push.
+REM
 REM Run the daily push using Git Bash explicitly.
 REM Windows ships its own bash.exe that launches WSL, so a plain `bash push_daily.sh`
 REM fails with "execvpe(/bin/bash)" on machines without a WSL distro installed.

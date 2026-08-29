@@ -834,12 +834,18 @@ class Bot:
                    else "ready" if self.x.configured() else "enabled but keys missing")
         reddit_status = ("disabled" if not self.cfg.get("reddit.enabled", False)
                          else f"r/{self.cfg.get('reddit.subreddit', 'buildinpublic')}")
-        await update.message.reply_text(
+        lines = [
             f"Social Daily Poster alive. Items last 24h: {row['c']}. "
             f"LinkedIn token: {'n/a' if days is None else f'{days}d left'}. "
             f"X: {x_status}. "
             f"Reddit: {reddit_status}. "
-            f"Session day: {sess['day'] if sess else 'none'}.")
+            f"Session day: {sess['day'] if sess else 'none'}."
+        ]
+        # A microphone whose state you can't see is a microphone you shouldn't
+        # trust, so capture reports here even when it's off.
+        from ..capture import capture_status_lines
+        lines += capture_status_lines(self.cfg)
+        await update.message.reply_text("\n".join(lines))
 
     async def on_x(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/x — recover the X step for a draft that published to LinkedIn but never
@@ -952,6 +958,15 @@ def main() -> None:
         # that survives sleep, so it lives in this already-running process.
         from .scheduler import start as start_scheduler
         start_scheduler(cfg)
+        # In server mode these run on the laptop as logon tasks and push over
+        # SSH. In laptop mode there is no separate laptop, so they run here —
+        # which means capture stops when this process stops.
+        if cfg.get("audio.enabled", False):
+            from ..capture.audio import start as start_audio
+            start_audio(cfg)
+        if cfg.get("activity.enabled", False):
+            from ..capture.activity import start as start_activity
+            start_activity(cfg)
 
     bot = Bot(cfg)
     app = Application.builder().token(token).build()

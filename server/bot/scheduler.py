@@ -15,6 +15,7 @@ from __future__ import annotations
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 from ..config import Config
 from ..pipeline.run_nightly import main as run_nightly_main
@@ -22,6 +23,9 @@ from ..store import Store
 from ..util import get_logger, local_tz, target_day
 
 log = get_logger("bot.scheduler")
+
+DEFAULT_POLL_SECONDS = 600
+HEARTBEAT_FILE = "bot-heartbeat"
 
 
 def _parse_schedule(cfg: Config) -> tuple[int, int]:
@@ -42,14 +46,49 @@ def _due(cfg: Config, store: Store) -> bool:
     return not store.has_drafts_for_day(target_day(cfg))
 
 
-def start(cfg: Config, poll_seconds: int = 600) -> None:
+def heartbeat_path(cfg: Config) -> Path:
+    return cfg.path_of("store_dir") / HEARTBEAT_FILE
+
+
+def heartbeat(cfg: Config) -> tuple[float, int] | None:
+    """(seconds since the bot last polled, the interval it polls at), or None if
+    no bot has ever run against this store.
+
+    In laptop mode nothing drafts unless this process is up, and "I closed the
+    terminal three weeks ago" looks exactly like a working install from the
+    outside — so the poll leaves a mark the doctor can read.
+    """
+    p = heartbeat_path(cfg)
+    try:
+        age = time.time() - p.stat().st_mtime
+    except OSError:
+        return None
+    try:
+        # the interval is recorded rather than assumed, so a bot started with a
+        # non-default poll doesn't read as dead
+        interval = int(p.read_text(encoding="utf-8").split()[1])
+    except (OSError, IndexError, ValueError):
+        interval = DEFAULT_POLL_SECONDS
+    return age, interval
+
+
+def start(cfg: Config, poll_seconds: int = DEFAULT_POLL_SECONDS) -> None:
     """Start the scheduler thread. Call once, from the laptop-mode bot process."""
+
+    def beat() -> None:
+        try:
+            heartbeat_path(cfg).write_text(f"{int(time.time())} {poll_seconds}\n",
+                                           encoding="utf-8")
+        except OSError as e:
+            log.warning("cannot write heartbeat: %s", e)
 
     def run() -> None:
         # A brief stagger avoids racing a nightly run already kicked off by
         # something else (e.g. a manual run) at bot startup.
+        beat()
         time.sleep(5)
         while True:
+            beat()
             try:
                 store = Store(cfg.path_of("store_dir"))  # own Store: sqlite per-thread
                 if _due(cfg, store):
@@ -57,6 +96,7 @@ def start(cfg: Config, poll_seconds: int = 600) -> None:
                     run_nightly_main(["--config", str(cfg.path)])
             except Exception:
                 log.exception("scheduled nightly run failed — will retry next poll")
+            beat()  # again: a nightly run can outlast the poll interval by itself
             time.sleep(poll_seconds)
 
     threading.Thread(target=run, daemon=True, name="nightly-scheduler").start()

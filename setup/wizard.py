@@ -1,8 +1,9 @@
 """Interactive setup wizard (server side): selects sources AND provisions them.
 
     python -m setup.wizard              # full guided setup (idempotent, re-runnable)
-    python -m setup.wizard --source X   # re-run one step: base|claude|telegram|gmail|
-                                        #   whatsapp|linkedin|bot|cron|systemd
+    python -m setup.wizard --source X   # re-run one step: base|claude|audio|activity|
+                                        #   telegram|gmail|whatsapp|linkedin|bot|
+                                        #   autostart|cron|systemd
     python -m setup.wizard --doctor     # health check of everything enabled
 
 Writes config.yaml / .env next to the repo root; never touches code.
@@ -17,6 +18,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -75,6 +77,39 @@ def ports_used_by_other_instances() -> set[int]:
                 except ValueError:
                     pass
     return used
+
+def venv_pip() -> Path:
+    return REPO / ".venv" / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
+
+
+def venv_python() -> Path:
+    return REPO / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def install_extra(req: str) -> bool:
+    """Install one of the optional requirements-*.txt files into the venv.
+
+    Heavy, platform-specific dependencies (faster-whisper pulls ctranslate2 and a
+    model runtime) are not in requirements.txt — they arrive only when the person
+    turns on the feature that needs them."""
+    path = REPO / req
+    print(f"  installing {req} (this can take a few minutes)...")
+    out = subprocess.run([str(venv_pip()), "install", "-q", "-r", str(path)])
+    if out.returncode == 0:
+        ok(f"{req} installed")
+        return True
+    bad(f"{req} failed to install — run by hand: {venv_pip()} install -r {path}")
+    return False
+
+
+def have_module(name: str) -> bool:
+    """Importable by the venv that actually runs the pipeline — which is not
+    necessarily this process: the first wizard run is started with system python
+    and creates the venv in step_base."""
+    py = venv_python()
+    return py.exists() and subprocess.run(
+        [str(py), "-c", f"import {name}"], capture_output=True).returncode == 0
+
 
 GREEN, RED, YELLOW, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[0m"
 
@@ -180,6 +215,41 @@ def crontab_cmd(data: dict, *args) -> list[str]:
     return ["crontab", *args]
 
 
+# WAHA always calls the host by this name — waha.compose.yml maps it with
+# `extra_hosts: host.docker.internal:host-gateway`, and Docker Desktop provides
+# it natively. What it resolves to on the host is what differs per platform.
+CONTAINER_HOST_ALIAS = "host.docker.internal"
+
+
+def _docker_is_desktop() -> bool:
+    """Docker Desktop runs the daemon inside a VM: there is no docker0 bridge on
+    the host, and host.docker.internal reaches the host's loopback."""
+    out = subprocess.run(["docker", "info", "--format", "{{.OperatingSystem}}"],
+                         capture_output=True, text=True)
+    return "docker desktop" in out.stdout.lower()
+
+
+def webhook_bind_host() -> tuple[str, str]:
+    """(address the webhook receiver should bind on, why it was chosen).
+
+    Loopback is the tightest binding and is enough under Docker Desktop. Native
+    Linux Docker resolves host-gateway to the docker0 bridge address instead,
+    which loopback does not cover — so ask Docker for that address rather than
+    assuming the conventional 172.17.0.1, which is absent whenever the daemon
+    was configured with a different bridge subnet.
+    """
+    if sys.platform in ("win32", "darwin") or _docker_is_desktop():
+        return "127.0.0.1", "Docker Desktop reaches the host on loopback"
+    gw = subprocess.run(
+        ["docker", "network", "inspect", "bridge", "--format",
+         "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
+        capture_output=True, text=True).stdout.strip()
+    if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", gw):
+        return gw, f"docker bridge gateway {gw}"
+    return "0.0.0.0", ("could not read the docker bridge gateway — binding every "
+                       "interface. Firewall this port if the host is exposed")
+
+
 def get_source(data: dict, type_: str) -> dict | None:
     for s in data.get("sources", []):
         if s.get("type") == type_:
@@ -252,7 +322,15 @@ def step_base(data: dict) -> None:
               ",".join(pl.get("always_hashtags", [])))
     pl["always_hashtags"] = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
     dirs = [data["store_dir"], data["logs_dir"]]
-    dirs.append(data["ingest_dir"] if laptop else f"{data['ingest_dir']}/laptop")
+    if laptop:
+        # One folder per thing that writes into the spool, created up front so
+        # ingest_dir sources can be scoped to a subfolder each. A single shared
+        # root would mean every source's include patterns have to exclude every
+        # other source's files.
+        dirs += [data["ingest_dir"]] + [f"{data['ingest_dir']}/{sub}"
+                                        for sub in ("screenshots", "audio", "activity", "drop")]
+    else:
+        dirs.append(f"{data['ingest_dir']}/laptop")
     for d in dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
     if laptop:
@@ -266,8 +344,8 @@ def step_base(data: dict) -> None:
     if not venv.exists():
         print("  creating venv + installing requirements...")
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-        pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
-        subprocess.run([str(pip), "install", "-q", "-r", str(REPO / "requirements.txt")], check=True)
+        subprocess.run([str(venv_pip()), "install", "-q", "-r", str(REPO / "requirements.txt")],
+                       check=True)
     ok("venv ready")
 
 
@@ -379,11 +457,192 @@ def step_claude(data: dict) -> None:
             print(f"  Point your OS screenshot tool's save location at:\n    {shots_dir}")
             print("  (files dropped there are moved into the store and removed from this "
                   "folder — it's a spool, not your permanent screenshot library)")
+        drop_dir = f"{data['ingest_dir']}/drop"
+        Path(drop_dir).mkdir(parents=True, exist_ok=True)
+        upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "drop",
+                             "path": drop_dir})
+        print(f"  Anything else worth including that day — notes, exports, transcripts:"
+              f"\n    {drop_dir}")
     else:
         # laptop ingest is on by default
         upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "laptop",
                              "path": f"{data['ingest_dir']}/laptop"})
         print("  Laptop side: clone the repo on the laptop and run setup\\wizard_laptop.ps1")
+
+
+def _ffmpeg_or_hint() -> bool:
+    """Report ffmpeg, and offer to install it where that can be done without sudo."""
+    from server.capture import ensure_ffmpeg, ffmpeg_install_hint
+    present, msg = ensure_ffmpeg()
+    if present:
+        ok(msg)
+        return True
+    bad(msg)
+    cmd = ffmpeg_install_hint()
+    runnable = (sys.platform == "win32" and shutil.which("winget")) or \
+               (sys.platform == "darwin" and shutil.which("brew"))
+    if runnable and yes(f"run `{cmd}` now?", True):
+        subprocess.run(cmd, shell=True)
+        present, msg = ensure_ffmpeg()
+        (ok if present else bad)(msg)
+    if not present:
+        warn("no recording or transcription until ffmpeg is on PATH — rerun this "
+             "step once it is")
+    return present
+
+
+def _pick_device(current: str) -> str:
+    from server.capture.audio import list_devices, preferred_device
+    try:
+        devices = list_devices()
+    except Exception as e:
+        warn(f"could not list input devices: {e} — leaving the device on auto")
+        return current
+    if not devices:
+        warn("no input devices found — leaving the device on auto")
+        return current
+    default = preferred_device(devices)
+    print("  input devices:")
+    for i, d in enumerate(devices, 1):
+        print(f"    {i}) {d}" + ("   <- suggested" if d == default else ""))
+    print("  A noise-suppressed virtual mic (NVIDIA Broadcast, Krisp) strips every")
+    print("  voice but yours — the opposite of what a room recording is for.")
+    pick = ask("device number (empty = suggested)")
+    if pick.isdigit() and 1 <= int(pick) <= len(devices):
+        return devices[int(pick) - 1]
+    return default
+
+
+def step_audio(data: dict) -> None:
+    print("\n== Office audio (always-on mic → nightly transcript) ==")
+    laptop = data.get("mode") == "laptop"
+    print("  Before you say yes — this records the room while you work:")
+    print("   - the mic hears everyone near it, not only you. Tell them.")
+    print("   - stretches with no speech are deleted on this machine and never")
+    print("     leave it; the rest is transcribed locally, nothing is uploaded.")
+    print("   - transcripts outlive the audio: raw files are discarded after")
+    print("     transcription, the text stays in the store.")
+    print("   - you can stop it at any moment by creating a file named PAUSED in")
+    print("     the spool dir; capture halts within one segment.")
+    if not yes("enable audio capture and transcription?", False):
+        data.setdefault("audio", {})["enabled"] = False
+        data.setdefault("transcription", {})["enabled"] = False
+        print("  left off — nothing is recorded.")
+        return
+
+    present = _ffmpeg_or_hint()
+
+    if laptop:
+        audio = data.setdefault("audio", {})
+        audio["enabled"] = True
+        out_dir = ask("audio spool dir", audio.get("out_dir") or f"{data['ingest_dir']}/audio")
+        Path(os.path.expanduser(out_dir)).mkdir(parents=True, exist_ok=True)
+        audio["out_dir"] = out_dir
+        audio["device"] = _pick_device(audio.get("device", "")) if present else audio.get("device", "")
+        fix_owner(data, out_dir)
+        # The recorder writes into this same directory, so the drainer has to be
+        # narrow: only vetted segments (`*.speech.opus`), never the control files,
+        # and never a segment ffmpeg still has open.
+        upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "audio",
+                             "path": out_dir,
+                             "include": ["*.speech.opus"],
+                             "exclude": ["PAUSED", "*.log", "MIC-PROBABLY-MUTED.txt"],
+                             "min_age_seconds": 90})
+        ok(f"recording to {out_dir}, started with the bot")
+        print(f"  To pause:  touch {out_dir}/PAUSED     (delete it to resume)")
+    else:
+        print("  Server mode: the laptop records, this box only transcribes.")
+        print("  On the laptop: python -m setup.wizard --source audio")
+        print("  (or laptop\\install_recorders.ps1 for the Windows push setup)")
+        from server.harvest.ingest_dir import admits_audio
+        carriers = [s.get("name") for s in data.get("sources", []) if admits_audio(s)]
+        if carriers:
+            ok(f"audio will arrive via ingest_dir source(s): {', '.join(carriers)}")
+        else:
+            bad("no enabled ingest_dir source accepts audio files — nothing would "
+                "ever be transcribed. Add one, or widen its include patterns.")
+
+    tr = data.setdefault("transcription", {})
+    installed = have_module("faster_whisper")
+    if installed:
+        ok("faster-whisper already installed")
+    elif yes("install faster-whisper now? (~1 GB with its runtime; the model itself "
+             "downloads on first use)", True):
+        installed = install_extra("requirements-audio.txt")
+    tr["enabled"] = installed
+    if installed:
+        print("  large-v3-turbo is multilingual — use it with language: auto.")
+        print("  ivrit-ai/whisper-large-v3-turbo-ct2 is better at Hebrew but renders")
+        print("  any other language as confident gibberish: only with language: he.")
+        tr["model"] = ask("model", tr.get("model") or "large-v3-turbo")
+        tr["language"] = ask("language (auto|he|ru|en...)", tr.get("language") or "auto")
+    else:
+        warn("transcription is off — recorded audio would pile up unread. Install "
+             "it later and rerun: python -m setup.wizard --source audio")
+
+    print("  Transcripts land in the nightly digest under 'Transcript'; ask the bot "
+          "for /digest to see them.")
+
+
+def step_activity(data: dict) -> None:
+    print("\n== Screen activity (what was in the foreground, plus screenshots) ==")
+    laptop = data.get("mode") == "laptop"
+    print("  Before you say yes — this watches your screen while you work:")
+    print("   - it logs which app is in front and its window title, every 30s.")
+    print("   - it takes occasional screenshots. Anything visible is captured:")
+    print("     other people's messages, a password manager you left open.")
+    print("   - IDEs and terminals are skipped by default (your sessions already")
+    print("     cover those), and nothing is captured while you're idle.")
+    print("   - everything stays on this machine until the nightly digest.")
+    print("   - you can stop it at any moment by creating a file named PAUSED in")
+    print("     the spool dir; capture halts within one sample.")
+    if not yes("enable screen-activity capture?", False):
+        data.setdefault("activity", {})["enabled"] = False
+        print("  left off — nothing is watched.")
+        return
+
+    if not laptop:
+        print("  Server mode: the laptop watches its own screen and pushes the logs.")
+        print("  On the laptop: python -m setup.wizard --source activity")
+        print("  (or laptop\\install_recorders.ps1 for the Windows push setup)")
+        return
+
+    if not have_module("mss") and yes("install the capture dependencies now? "
+                                      "(Pillow, mss, and the per-OS window APIs)", True):
+        install_extra("requirements-capture.txt")
+
+    # Fail here, where it can be explained, rather than in a background thread
+    # whose exception nobody reads.
+    try:
+        from server.capture.activity import make_backend
+        backend = make_backend()
+        app, title = backend.foreground()
+        ok(f"foreground window readable via {backend.name}: [{app}] {title}"[:100])
+        if getattr(backend, "titles_available", True) is False:
+            warn("window titles need the macOS Accessibility permission — grant it in "
+                 "System Settings > Privacy & Security > Accessibility, then rerun "
+                 "this step. Until then only app names are logged.")
+    except Exception as e:
+        bad(f"activity capture cannot run here: {e}")
+        if not yes("save the config anyway?", False):
+            data.setdefault("activity", {})["enabled"] = False
+            return
+
+    activity = data.setdefault("activity", {})
+    activity["enabled"] = True
+    out_dir = ask("activity spool dir", activity.get("out_dir") or f"{data['ingest_dir']}/activity")
+    Path(os.path.expanduser(out_dir)).mkdir(parents=True, exist_ok=True)
+    activity["out_dir"] = out_dir
+    fix_owner(data, out_dir)
+    # The recorder writes into this same directory. min_age_seconds outlives the
+    # hourly NDJSON rotation, so the log for the current hour — the one still
+    # being appended to — is never drained mid-write.
+    upsert_source(data, {"type": "ingest_dir", "enabled": True, "name": "activity",
+                         "path": out_dir,
+                         "exclude": ["PAUSED"],
+                         "min_age_seconds": 300})
+    ok(f"watching, writing to {out_dir}, started with the bot")
+    print(f"  To pause:  touch {out_dir}/PAUSED     (delete it to resume)")
 
 
 def step_telegram(data: dict) -> None:
@@ -455,15 +714,42 @@ def step_gmail(data: dict) -> None:
     if not yes("enable Gmail digest?", get_source(data, "gmail") is not None):
         return
     token_file = ask("token file path", f"{data['store_dir']}/gmail-token.json")
+    client_file = f"{data['store_dir']}/gmail-oauth-client.json"
     upsert_source(data, {"type": "gmail", "enabled": True, "token_file": token_file,
-                         "credentials_file": f"{data['store_dir']}/gmail-oauth-client.json",
+                         "credentials_file": client_file,
                          "transcript_senders": ["@fathom.video", "@tldv.io", "@tactiq.io"]})
     if Path(os.path.expanduser(token_file)).exists():
         ok("token file already present")
-    else:
+        return
+    if data.get("mode") != "laptop":
         print("  OAuth needs a browser. On your laptop (same repo):")
         print("    python -m setup.gmail_auth --client gmail-oauth-client.json --out gmail-token.json")
         print(f"  then copy gmail-token.json to this server at: {token_file}")
+        return
+    # Laptop mode has the browser right here, so there is nothing to copy —
+    # sending someone to a second machine and back was pure ceremony.
+    client = Path(os.path.expanduser(client_file))
+    if not client.exists():
+        print("  Download the OAuth client JSON from Google Cloud Console")
+        print("  (APIs & Services > Credentials > OAuth client ID > Desktop app), then:")
+        src = ask(f"path to the downloaded client JSON (empty = skip, put it at {client} later)")
+        if not src:
+            warn(f"no client JSON — run later: python -m setup.gmail_auth "
+                 f"--client <file> --out {token_file}")
+            return
+        client.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(os.path.expanduser(src), client)
+        ok(f"client JSON saved to {client}")
+    if not yes("run the Google sign-in now? (a browser window opens)", True):
+        print(f"  Later: python -m setup.gmail_auth --client {client} --out {token_file}")
+        return
+    out = subprocess.run([str(venv_python()), "-m", "setup.gmail_auth",
+                          "--client", str(client), "--out", os.path.expanduser(token_file)],
+                         cwd=REPO)
+    if out.returncode == 0 and Path(os.path.expanduser(token_file)).exists():
+        ok(f"token written to {token_file}")
+    else:
+        bad("OAuth did not complete — rerun: python -m setup.wizard --source gmail")
 
 
 def step_whatsapp(data: dict) -> None:
@@ -547,11 +833,8 @@ def step_whatsapp(data: dict) -> None:
         default_port = current_waha_port() or first_free(3000)
         waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
 
-    # The container reaches the host on the docker bridge gateway, so the webhook
-    # receiver must bind there rather than on loopback.
-    gw = subprocess.run(
-        "ip -4 addr show docker0 | grep -oP 'inet \\K[\\d.]+'",
-        shell=True, capture_output=True, text=True).stdout.strip() or "172.17.0.1"
+    gw, why = webhook_bind_host()
+    (warn if gw == "0.0.0.0" else ok)(f"webhook binds on {gw} — {why}")
 
     upsert_source(data, {"type": "whatsapp", "enabled": True,
                          "waha_url": f"http://127.0.0.1:{waha_port}",
@@ -601,7 +884,9 @@ def step_pair(data: dict) -> None:
         """Register our receiver on the session itself. The container-level default
         (WHATSAPP_HOOK_URL) does not apply to sessions created via the dashboard,
         which silently leaves messages undelivered."""
-        url = f"http://{src.get('webhook_host', '172.17.0.1')}:{src.get('webhook_port', 8477)}/waha"
+        # the URL is called from INSIDE the container, so it must be the alias,
+        # not whatever host-side address the receiver happens to bind on
+        url = f"http://{CONTAINER_HOST_ALIAS}:{src.get('webhook_port', 8477)}/waha"
         body = {"config": {"webhooks": [{"url": url, "events": ["message"]}]}}
         r = requests.put(f"{base}/api/sessions/{sess}", headers=headers, json=body, timeout=30)
         if r.ok:
@@ -910,6 +1195,26 @@ def step_laptop(data: dict) -> None:
   --------------------------------------------------------""")
 
 
+def step_autostart(data: dict) -> None:
+    """Hand the bot process to the OS, so nobody has to remember to start it."""
+    print("\n== Autostart (keep the bot running) ==")
+    from setup import autostart
+    print("  In laptop mode everything lives in one process: the nightly draft,")
+    print("  the scheduler, and any recorder you enabled. If it isn't running,")
+    print("  nothing happens — and nothing says so.")
+    print(f"  Current state: {autostart.status()}")
+    if not yes("start the bot automatically at login?", True):
+        warn("you'll have to run `python -m server.bot.main` yourself and keep it open")
+        return
+    try:
+        for note in autostart.install(venv_python(), REPO, CONFIG):
+            ok(note)
+    except Exception as e:
+        bad(f"could not register autostart: {e}")
+        print(f"  Start it by hand meanwhile: {venv_python()} -m server.bot.main")
+        raise
+
+
 def step_cron(data: dict) -> None:
     print("\n== Cron ==")
     tag = f"# dailypost-nightly{'-' + INSTANCE if INSTANCE else ''}"
@@ -946,6 +1251,16 @@ def step_systemd(data: dict) -> None:
 
 
 # ---------- doctor -------------------------------------------------------------
+
+def _ago(seconds: float) -> str:
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 5400:
+        return f"{int(seconds / 60)}m"
+    if seconds < 172800:
+        return f"{int(seconds / 3600)}h"
+    return f"{int(seconds / 86400)}d"
+
 
 def doctor() -> int:
     print("== Social Daily Poster doctor ==")
@@ -1070,8 +1385,12 @@ def doctor() -> int:
         elif t == "gmail":
             def _gm(s=src):
                 from server.harvest.gmail import _client
-                _client(Path(os.path.expanduser(s["token_file"])), Path(""))
-                return "token valid"
+                tf = Path(os.path.expanduser(s["token_file"]))
+                _client(tf, Path(""))
+                # A refresh token that stops being exercised expires after ~6
+                # months of disuse, and the failure is a harvest that quietly
+                # returns nothing — so report when it was last written.
+                return f"token valid, last refreshed {_ago(time.time() - tf.stat().st_mtime)} ago"
             check(name, _gm)
         elif t == "whatsapp":
             def _wa(s=src):
@@ -1094,16 +1413,53 @@ def doctor() -> int:
             def _wa_reach(s=src):
                 """WAHA runs in a container; if it can't reach our host-side receiver,
                 messages are dropped with no error anywhere."""
-                url = hooks_url = f"http://{s.get('webhook_host', '127.0.0.1')}:{s.get('webhook_port', 8477)}/health"
+                port = s.get("webhook_port", 8477)
+                bound = s.get("webhook_host", "127.0.0.1")
+                # probe the alias the container actually calls, whatever the
+                # receiver binds on
+                url = f"http://{CONTAINER_HOST_ALIAS}:{port}/health"
                 out = subprocess.run(
                     ["docker", "exec", s.get("container_name", "dailypost-waha"), "sh", "-c",
-                     f"wget -qO- --timeout=5 {url.replace('127.0.0.1', 'host.docker.internal')}"],
+                     f"wget -qO- --timeout=5 {url}"],
                     capture_output=True, text=True, timeout=20)
                 if "ok" not in out.stdout:
-                    raise RuntimeError(f"WAHA container cannot reach {hooks_url} — set "
-                                       "webhook_host to the docker bridge gateway (172.17.0.1)")
+                    want, why = webhook_bind_host()
+                    raise RuntimeError(
+                        f"WAHA container cannot reach {url}; the receiver is bound on "
+                        f"{bound}. On this machine it should be {want} ({why}) — set "
+                        "webhook_host to that, or rerun: python -m setup.wizard "
+                        "--source whatsapp")
                 return "container can reach the webhook"
             check(f"{name} delivery", _wa_reach)
+
+    def _transcription():
+        if not cfg.get("transcription.enabled", False):
+            return "disabled"
+        from server.capture import ensure_ffmpeg
+        from server.harvest import can_produce_audio
+        if not can_produce_audio(cfg):
+            raise RuntimeError(
+                "enabled, but no source can ever produce audio — transcription "
+                "queries kind='audio' and finds nothing, silently, every night. "
+                "Run: python -m setup.wizard --source audio")
+        present, msg = ensure_ffmpeg()
+        if not present:
+            raise RuntimeError(msg)
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            raise RuntimeError("faster-whisper not installed — run: "
+                               f"{venv_pip()} install -r requirements-audio.txt")
+        from server.store import Store
+        db = Store(cfg.path_of("store_dir")).db
+        pending = db.execute(
+            "SELECT COUNT(*) FROM items WHERE kind='audio' AND (summary IS NULL OR summary='')"
+        ).fetchone()[0]
+        recent = db.execute(
+            "SELECT COUNT(*) FROM items WHERE kind='transcript' AND ts >= date('now','-7 day')"
+        ).fetchone()[0]
+        return f"{pending} pending, {recent} transcript(s) in 7 days"
+    check("transcription", _transcription)
 
     def _bot():
         import requests
@@ -1174,11 +1530,44 @@ def doctor() -> int:
 
     if laptop:
         def _schedule():
-            from server.bot.scheduler import _parse_schedule
+            """The old version of this check printed the schedule and stopped —
+            which passed just as cheerfully on a laptop where the bot had been
+            closed for a month and nothing had drafted since."""
+            from setup import autostart
+            from server.bot.scheduler import _parse_schedule, heartbeat
             hour, minute = _parse_schedule(cfg)
-            return (f"drafts at {hour:02d}:{minute:02d} local — the bot process must stay "
-                    "running (python -m server.bot.main) for this to fire")
+            when = f"drafts at {hour:02d}:{minute:02d} local"
+            _, auto = autostart.state()
+            hb = heartbeat(cfg)
+            if hb is None:
+                raise RuntimeError(
+                    f"{when}, but no bot has ever polled here — nothing will draft. "
+                    f"Autostart: {auto}. Fix: python -m setup.wizard --source autostart")
+            age, interval = hb
+            if age > interval * 2 + 60:
+                raise RuntimeError(
+                    f"{when}, but the bot last checked in {_ago(age)} ago — it is not "
+                    f"running. Autostart: {auto}. "
+                    "Fix: python -m setup.wizard --source autostart")
+            return f"{when}; bot alive ({_ago(age)} ago), autostart: {auto}"
         check("nightly schedule", _schedule)
+
+        def _capture():
+            """PAUSED is a warning, never a failure — pausing the mic is a
+            supported thing to do, and a doctor that scolds you for it teaches
+            people to ignore the doctor."""
+            from server.capture import capture_status_lines
+            for line in capture_status_lines(cfg):
+                (warn if "PAUSED" in line else ok)(f"  {line}")
+            for name in ("audio", "activity"):
+                if not cfg.get(f"{name}.enabled", False):
+                    continue
+                out_dir = cfg.path_of(f"{name}.out_dir")
+                if not out_dir or not out_dir.exists():
+                    raise RuntimeError(f"{name}.out_dir {out_dir} does not exist — "
+                                       "the recorder cannot be writing anything")
+            return "reported above"
+        check("capture", _capture)
     else:
         def _cron_window():
             """The retry slots must all fall before local noon.
@@ -1233,10 +1622,12 @@ def doctor() -> int:
 
 
 STEPS = {
-    "base": step_base, "llm": step_llm, "claude": step_claude, "telegram": step_telegram,
+    "base": step_base, "llm": step_llm, "claude": step_claude, "audio": step_audio,
+    "activity": step_activity, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
     "pair": step_pair, "linkedin": step_linkedin, "x": step_x, "reddit": step_reddit,
-    "image": step_image, "laptop": step_laptop, "cron": step_cron, "systemd": step_systemd,
+    "image": step_image, "laptop": step_laptop, "autostart": step_autostart,
+    "cron": step_cron, "systemd": step_systemd,
 }
 
 
@@ -1258,6 +1649,20 @@ def _done_claude(data):
     types = {s.get("type") for s in data.get("sources", []) if s.get("enabled")}
     if types & {"claude_projects_dir", "claude_sessions", "codex_sessions"}:
         return "claude/codex source(s) configured"
+
+
+def _done_audio(data):
+    bits = []
+    if data.get("audio", {}).get("enabled"):
+        bits.append(f"recording to {data['audio'].get('out_dir')}")
+    if data.get("transcription", {}).get("enabled"):
+        bits.append(f"transcribing with {data['transcription'].get('model')}")
+    return ", ".join(bits) or None
+
+
+def _done_activity(data):
+    if data.get("activity", {}).get("enabled"):
+        return f"watching, writing to {data['activity'].get('out_dir')}"
 
 
 def _done_telegram(data):
@@ -1336,11 +1741,19 @@ def _done_laptop(data):
     return None  # always offer it: it prints the laptop instructions
 
 
+def _done_autostart(data):
+    from setup import autostart
+    installed, msg = autostart.state()
+    return msg if installed else None
+
+
 DONE_PROBES = {
-    "base": _done_base, "llm": _done_llm, "claude": _done_claude, "telegram": _done_telegram,
+    "base": _done_base, "llm": _done_llm, "claude": _done_claude, "audio": _done_audio,
+    "activity": _done_activity, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
     "pair": _done_pair, "linkedin": _done_linkedin, "x": _done_x, "reddit": _done_reddit,
-    "image": _done_image, "laptop": _done_laptop, "cron": _done_cron, "systemd": _done_systemd,
+    "image": _done_image, "laptop": _done_laptop, "autostart": _done_autostart,
+    "cron": _done_cron, "systemd": _done_systemd,
 }
 
 
@@ -1415,13 +1828,15 @@ def main(argv=None) -> int:
 
     laptop = data.get("mode") == "laptop"
     if laptop:
-        order = ["base", "llm", "claude", "telegram", "bot", "gmail"]
+        order = ["base", "llm", "claude", "audio", "activity", "telegram", "bot", "gmail"]
         if shutil.which("docker"):
             order.append("whatsapp")
-        order += ["linkedin", "image", "x", "reddit"]
+        # autostart last: it starts the process, so everything it runs should
+        # already be configured by the time it does
+        order += ["linkedin", "image", "x", "reddit", "autostart"]
     else:
-        order = ["base", "llm", "claude", "telegram", "bot", "gmail", "whatsapp", "pair",
-                 "linkedin", "laptop", "cron", "systemd"]
+        order = ["base", "llm", "claude", "audio", "activity", "telegram", "bot", "gmail",
+                 "whatsapp", "pair", "linkedin", "laptop", "cron", "systemd"]
 
     print("(steps already completed are skipped — answer y to redo one)")
     failed = []
@@ -1456,9 +1871,12 @@ def main(argv=None) -> int:
           f"{f' for {INSTANCE}' if INSTANCE else ''}.")
     print(f"  health check:    python -m setup.wizard{inst} --doctor")
     if laptop:
+        from setup import autostart
         print("  manual run:      python -m server.pipeline.run_nightly --dry-run")
-        print("  start the bot:   python -m server.bot.main   (leave it running — it")
-        print("                   polls Telegram AND schedules the nightly draft)")
+        print(f"  autostart:       {autostart.status()}")
+        print("  start by hand:   python -m server.bot.main   (leave it running — it")
+        print("                   polls Telegram, schedules the nightly draft, and")
+        print("                   runs any recorder you enabled)")
     elif INSTANCE:
         print(f"  manual run:      DAILYPOST_CONFIG={CONFIG} server/run_nightly.sh --dry-run")
         print(f"  bot service:     systemctl status {unit_name()}")

@@ -1,0 +1,6 @@
+# Optional: office-audio transcription (transcription.enabled: true).
+# Not in requirements.txt — it pulls ctranslate2 and a model runtime (~200MB+),
+# which nobody should download unless they turned the feature on.
+# Install:  .venv/bin/pip install -r requirements-audio.txt
+#   or via: python -m setup.wizard --source audio
+faster-whisper>=1.0

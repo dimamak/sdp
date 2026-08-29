@@ -1,0 +1,10 @@
+# Optional: local screen-activity capture (activity.enabled: true).
+# Install:  .venv/bin/pip install -r requirements-capture.txt
+#   or via: python -m setup.wizard --source activity
+Pillow>=10.0
+mss>=9.0
+# macOS: frontmost app + idle time come from AppKit/Quartz
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+# Linux/X11: foreground window title and idle time
+python-xlib>=0.33; sys_platform == "linux"

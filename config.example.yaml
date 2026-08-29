@@ -4,22 +4,36 @@
 # laptop: everything runs on this one machine, no server, no cron/systemd — the
 #         bot process schedules its own nightly run and catches up on wake.
 # server: shared box, provisioned with /opt paths + a run-as user, cron + systemd.
-# Set by the wizard's first question; the fields below (install_root, run_as_user,
-# cron_utc) only apply in server mode.
+# Set by the wizard's first question.
+#
+# This file shows SERVER mode throughout. Every key marked "server mode only"
+# below is ignored in laptop mode; what the wizard writes there instead is:
+#
+#   mode: laptop
+#   store_dir: ~/.dailypost/data
+#   ingest_dir: ~/.dailypost/ingest    # with screenshots/ audio/ activity/ drop/
+#   logs_dir:  ~/.dailypost/logs
+#   pipeline:
+#     schedule_time: "23:30"           # in-process scheduler; no cron_utc, no
+#                                      # wait_for_laptop — this IS the laptop
+#
+# and the bot process itself is started at login by setup/autostart.py (systemd
+# --user, launchd, or a Task Scheduler logon task). Nothing runs while it's down.
 mode: server
 
-install_root: /opt/dailypost          # server install root
+install_root: /opt/dailypost          # server mode only: install root
 store_dir: /opt/dailypost/data        # SQLite store + files/
 ingest_dir: /opt/dailypost/ingest     # where the laptop push lands
 logs_dir: /opt/dailypost/logs
-run_as_user: youruser                 # non-root user that owns everything and runs jobs
+run_as_user: youruser                 # server mode only: non-root user that owns
+                                      # everything and runs the jobs
 
 pipeline:
   timezone: Etc/UTC                   # day boundaries + "yesterday" logic — set to your own,
                                       # e.g. America/New_York, Europe/Berlin
   schedule_time: "23:30"              # laptop mode only: local time the in-process
                                       # scheduler drafts at (server mode uses cron_utc below)
-  cron_utc: "30 0-9 * * *"            # server crontab, UTC. A RANGE of hours, not
+  cron_utc: "30 0-9 * * *"            # server mode only: crontab, UTC. A RANGE of hours, not
                                       # one: attempts repeat until the laptop has
                                       # checked in, then stop (a drafted day is a
                                       # no-op). Keep the last hour before
@@ -27,13 +41,15 @@ pipeline:
   window_hours: 26                    # how far back the digest looks for un-used items
   digest_max_chars: 400000            # hard cap on digest size fed to the LLM
   per_item_max_chars: 4000            # cap per harvested item in the digest
-  # The laptop carries coding sessions, screenshots and office audio, so drafting
-  # before it has pushed throws away the day's best material. If it was asleep at
-  # the scheduled hour, wait for its morning push instead — the cron runs on a
-  # range of hours and the first attempt with data does the work.
+  # Server mode only. The laptop carries coding sessions, screenshots and office
+  # audio, so drafting before it has pushed throws away the day's best material.
+  # If it was asleep at the scheduled hour, wait for its morning push instead —
+  # the cron runs on a range of hours and the first attempt with data does the
+  # work. In laptop mode there is nothing to wait for, so both are ignored.
   wait_for_laptop: true
-  wait_deadline_hour: 12              # local hour after which we draft regardless,
-                                      # so a laptop left off all week still posts
+  wait_deadline_hour: 12              # server mode only: local hour after which we
+                                      # draft regardless, so a laptop left off all
+                                      # week still posts
   max_drafts: 4                       # how many stories to draft per day (one message each)
   recent_hooks: 10                    # past opening lines shown to the drafter so it doesn't
                                       # reuse the same hook move night after night (one per
@@ -115,11 +131,32 @@ sources:
     name: codex
     # codex_home: ~/.codex              # override if $CODEX_HOME is non-default
 
-  # Files pushed from the laptop (Claude JSONL, screenshots, audio) — see laptop/push_daily.sh.
+  # A drop folder that gets drained: every file under `path` is moved into the
+  # store, classified by extension (.jsonl .png .opus .txt .md ...) and removed
+  # from the folder. It is a spool, not a library.
+  #
+  # In server mode there is one of these, for what the laptop pushes over SSH.
+  # In laptop mode the wizard registers one per producer — screenshots, audio,
+  # activity, drop — each scoped to its own subfolder, because include/exclude
+  # patterns are matched per source and a shared root would mean every source
+  # has to exclude every other source's files.
+  #
+  #   include           only these glob patterns are taken (default: everything)
+  #   exclude           never taken, and never deleted. Recorders keep control
+  #                     files in their spool — PAUSED above all — and an ingest
+  #                     that swallowed PAUSED would silently restart a paused
+  #                     microphone. Extensionless files are excluded anyway, but
+  #                     naming them is what makes that guarantee explicit.
+  #   min_age_seconds   skip files modified more recently than this, so a file
+  #                     still being written (an open ffmpeg segment, the current
+  #                     hour's NDJSON) is not ingested half-finished.
   - type: ingest_dir
     enabled: true
     name: laptop
     path: /opt/dailypost/ingest/laptop
+    # include: ["*.speech.opus"]
+    # exclude: ["PAUSED", "*.log"]
+    # min_age_seconds: 90
 
   # Telegram personal history via Telethon (MTProto). Needs one-time interactive
   # login (setup wizard) to create the session file. api_id/api_hash in .env.
@@ -148,9 +185,14 @@ sources:
     enabled: false
     waha_url: http://127.0.0.1:3000
     webhook_port: 8477                 # port the bot service listens on for WAHA events
-    webhook_host: 127.0.0.1            # set to the docker bridge gateway (usually
-                                       # 172.17.0.1) so the WAHA container can reach it;
-                                       # the wizard detects this for you
+    webhook_host: 127.0.0.1            # host address the receiver binds on, so the WAHA
+                                       # container can reach it. Docker Desktop (Windows,
+                                       # macOS, and Docker Desktop for Linux) reaches the
+                                       # host on loopback; native Linux Docker reaches it
+                                       # on the docker0 bridge gateway, which is usually
+                                       # but not always 172.17.0.1. The wizard asks Docker
+                                       # rather than guessing. The container always calls
+                                       # host.docker.internal either way.
 
 bot:
   # Telegram bot for draft delivery + Approve/Edit/Skip. Token + allowed chat id in .env.
@@ -283,8 +325,64 @@ laptop:
       dir: ~/Pictures/Screenshots
       include: "*.png"
 
+# ---------------------------------------------------------------------------
+# Always-on office audio capture (Windows, macOS, Linux/X11 + PulseAudio).
+# OFF by default, and it stays off until you answer yes to an explicit question:
+# the microphone hears everyone in the room, not just you, and transcripts
+# outlive the audio they came from.
+#
+# PAUSE any time by creating a file named PAUSED in out_dir; capture stops within
+# a few seconds and nothing — not the recorder, not the nightly ingest — deletes
+# that file. Delete it yourself to resume.
+#
+# In laptop mode the bot process runs the recorder in a thread, so capture stops
+# when the bot stops. In server mode a Windows laptop runs it as a logon task
+# (laptop/install_recorders.ps1) and pushes the segments over SSH.
+# Set up with: python -m setup.wizard --source audio
+# ---------------------------------------------------------------------------
+audio:
+  enabled: false
+  out_dir: ~/.dailypost/audio          # the recorder's spool; an ingest_dir source
+                                       # with include: ["*.speech.opus"] drains it
+  device: ""                           # empty = auto-pick a room mic. List candidates
+                                       # with: python -m server.capture.audio --list-devices
+                                       # Windows: a dshow device name. macOS: an
+                                       # avfoundation index. Linux: a pulse source name,
+                                       # or "alsa:<device>" to force bare ALSA.
+  segment_seconds: 120                 # one file per 2 minutes: the Ogg muxer only lands
+                                       # data as pages complete, so shorter segments bound
+                                       # what a crash can lose
+  bitrate_kbps: 24                     # mono, speech only — a full day is well under 100 MB
+  silence_threshold_db: -35            # below this counts as silence
+  min_speech_seconds: 4                # segments with less speech than this are deleted
+                                       # locally and never reach the store or the network
+
+# ---------------------------------------------------------------------------
+# Screen-activity capture: what was in the foreground, plus occasional
+# screenshots — the non-coding half of the day that no transcript records.
+# OFF by default, same consent rules and same PAUSED file as audio above.
+# Wayland is not supported (no compositor-independent way to read the foreground
+# window or grab the screen without a portal prompt per shot); the recorder
+# refuses to start there rather than logging "?" all day.
+# Set up with: python -m setup.wizard --source activity
+# ---------------------------------------------------------------------------
+activity:
+  enabled: false
+  out_dir: ~/.dailypost/activity       # NDJSON log + screenshots; drained by an ingest_dir
+  sample_seconds: 30                   # how often the foreground window is sampled
+  idle_seconds: 180                    # no input for this long = stop sampling
+  screenshot_seconds: 300              # minimum gap between screenshots (an app change
+                                       # can trigger one sooner)
+  screenshot_max_width: 1280           # downscaled before storage
+  screenshot_quality: 60
+  skip_shot_apps: ["Code", "devenv", "WindowsTerminal", "Terminal", "iTerm2",
+                   "idea64", "pycharm64", "alacritty", "kitty", "gnome-terminal"]
+                                       # IDEs and terminals are already captured in full
+                                       # by the session transcripts — screenshotting them
+                                       # adds bulk and leaks whatever else is on screen
+
 # Local speech-to-text for harvested audio (always-on office capture, call
-# debriefs). Runs before the digest on the nightly cron.
+# debriefs). Runs at the start of every nightly run, before the digest.
 transcription:
   enabled: false
   # Pick the model to match how people actually speak in the room:

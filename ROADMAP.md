@@ -13,11 +13,11 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   official LinkedIn `w_member_social` post
 - Interactive setup wizard (`python -m setup.wizard`) + `--doctor`
 
-## Phase 2 — Audio  ✅ implemented (laptop-only capture)
-- Laptop always-on office audio capture (`laptop/record_audio.ps1`): continuous
-  mic recording in short Opus segments, silence-swept locally so a quiet day
-  never leaves the laptop; a `PAUSED` flag file or `stop_recording.cmd` mutes
-  it for private conversations
+## Phase 2 — Audio  ✅ implemented
+- Always-on office audio capture (`server/capture/audio.py`, Windows/macOS/Linux):
+  continuous mic recording in short Opus segments, silence-swept locally so a
+  quiet day never leaves the machine; a `PAUSED` flag file mutes it for private
+  conversations, and nothing in the pipeline may delete that flag
 - Server transcription (`server/pipeline/transcribe.py`): faster-whisper,
   INT8 `large-v3-turbo` by default; for Hebrew-only rooms the ivrit.ai
   fine-tune with `language: 'he'` (the fine-tune can't translate — transcribe
@@ -27,9 +27,8 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   every nightly run
 - Still open: a phone post-call debrief habit (automation rule → recorder →
   file reaches the server via cloud-sync or Syncthing), a hotkey/manual WAV
-  recorder for in-person conversations, a Groq API fallback for
-  overflow/English transcription, and a macOS/Linux equivalent of the
-  Windows-only recorder script
+  recorder for in-person conversations, and a Groq API fallback for
+  overflow/English transcription
 
 ## Phase 3 — Images  ✅ implemented
 - Approve is now two-stage: it draws an illustration for the post (Gemini API,
@@ -105,6 +104,12 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   either way
 - Setup wizard asks laptop-vs-server up front and branches its whole step
   order and defaults (home-directory paths instead of `/opt`, no run-as user)
+- Both recorders run as threads inside that same bot process, so laptop mode
+  captures audio and screen activity with nothing else to install or start —
+  and `setup/autostart.py` registers the process with the OS's own session
+  manager (systemd `--user`, launchd, Task Scheduler logon task) so it returns
+  at login. The bot writes a heartbeat the doctor checks, because "the bot
+  isn't running" used to look exactly like a healthy install
 - No separate server needed for the main single-person use case; the old
   Windows-laptop-pushes-to-a-remote-server architecture (Phase 1) still works
   unchanged for people who want an always-on shared box instead

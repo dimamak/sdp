@@ -1,6 +1,15 @@
 # Registers the always-on recorders as logon scheduled tasks, adds their folders
 # to push.conf, and creates pause/resume shortcuts.
 #
+# This is the SERVER-mode path: a Windows laptop records locally and pushes the
+# output to a separate server over SSH. In laptop mode the recorders run inside
+# the bot process instead and are configured by:
+#     python -m setup.wizard --source audio
+#     python -m setup.wizard --source activity
+#
+# The recorders themselves are Python (server/capture/), not PowerShell — the
+# same code runs on Windows, macOS and Linux. This script only registers them.
+#
 # Run:  powershell -ExecutionPolicy Bypass -File laptop\install_recorders.ps1
 param(
     [string]$Root = "$env:USERPROFILE\dailypost",
@@ -10,9 +19,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptDir
 $audioDir = Join-Path $Root "audio"
 $activityDir = Join-Path $Root "activity"
 New-Item -ItemType Directory -Force -Path $audioDir, $activityDir | Out-Null
+
+$python = Join-Path $repoRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $python)) {
+    throw "no venv at $python - run 'python -m setup.wizard' in $repoRoot first"
+}
+if (-not $NoActivity) {
+    # screenshots + foreground-window reading need Pillow/mss, which are not in
+    # requirements.txt (nobody downloads them unless they turn this on)
+    & (Join-Path $repoRoot ".venv\Scripts\pip.exe") install -q -r (Join-Path $repoRoot "requirements-capture.txt")
+}
 
 function Install-Ffmpeg {
     # Only the audio recorder needs ffmpeg; the activity recorder uses .NET and Win32.
@@ -129,22 +149,24 @@ function ConvertTo-BashPath([string]$p) {
     return $p
 }
 
-function Register-LogonTask([string]$name, [string]$script, [string]$outDir) {
-    $ps = (Get-Command powershell).Source
-    # PowerShell's -WindowStyle Hidden still leaves a console window when the
-    # process is started by Task Scheduler. Launching through wscript with window
-    # style 0 is the reliable way to get a truly hidden INTERACTIVE process -
-    # and it must stay interactive, because screen capture needs a real desktop.
+function Register-LogonTask([string]$name, [string]$module, [string]$outDir) {
+    # Launching through wscript with window style 0 is the reliable way to get a
+    # truly hidden INTERACTIVE process - and it must stay interactive, because
+    # screen capture needs a real desktop. (python.exe under Task Scheduler
+    # otherwise flashes or keeps a console window.)
     #
     # The command is assembled with Chr(34) rather than escaped quotes: paths
     # contain spaces, and nested quote-doubling across PowerShell -> VBScript is
     # where this silently breaks.
     $vbs = Join-Path $Root "$name.vbs"
     $vbsLines = @(
-        'Dim q, cmd',
+        'Dim q, cmd, sh',
         'q = Chr(34)',
-        "cmd = q & ""$ps"" & q & "" -ExecutionPolicy Bypass -NoProfile -File "" & q & ""$script"" & q & "" -OutDir "" & q & ""$outDir"" & q",
-        'CreateObject("WScript.Shell").Run cmd, 0, False'
+        "cmd = q & ""$python"" & q & "" -m $module --out-dir "" & q & ""$outDir"" & q",
+        'Set sh = CreateObject("WScript.Shell")',
+        # `python -m` resolves the package from the working directory
+        "sh.CurrentDirectory = ""$repoRoot""",
+        'sh.Run cmd, 0, False'
     )
     Set-Content -Path $vbs -Value $vbsLines -Encoding ascii
 
@@ -190,10 +212,10 @@ function Register-LogonTask([string]$name, [string]$script, [string]$outDir) {
 }
 
 if (-not $NoAudio) {
-    Register-LogonTask "dailypost-record-audio" (Join-Path $scriptDir "record_audio.ps1") $audioDir
+    Register-LogonTask "dailypost-record-audio" "server.capture.audio" $audioDir
 }
 if (-not $NoActivity) {
-    Register-LogonTask "dailypost-record-activity" (Join-Path $scriptDir "record_activity.ps1") $activityDir
+    Register-LogonTask "dailypost-record-activity" "server.capture.activity" $activityDir
 }
 
 # pause / resume shortcuts - the mic hears the whole room, so stopping it must be
@@ -239,7 +261,15 @@ if (Test-Path $conf) {
         Write-Host "push.conf already ships audio + activity"
     }
 } else {
-    Write-Host "NOTE: laptop\push.conf not found - run setup\wizard_laptop.ps1 first, then re-run this."
+    # No push.conf means there is no separate server to push to. That is the normal
+    # laptop-mode shape, not an error: the nightly runs on this machine and reads
+    # the recorder folders through an ingest_dir source instead.
+    Write-Host ""
+    Write-Host "No laptop\push.conf - nothing will be pushed anywhere." -ForegroundColor Yellow
+    Write-Host "  laptop mode (everything on this machine): register the recorder folders with"
+    Write-Host "    .venv\Scripts\python.exe -m setup.wizard --source audio"
+    Write-Host "    .venv\Scripts\python.exe -m setup.wizard --source activity"
+    Write-Host "  server mode (push to a separate box): run setup\wizard_laptop.ps1, then re-run this."
 }
 
 Write-Host "`nStart now without logging out:"

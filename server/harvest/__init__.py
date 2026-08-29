@@ -41,6 +41,17 @@ def unsafe_sources(cfg) -> list[str]:
     return bad
 
 
+def can_produce_audio(cfg) -> bool:
+    """Is any enabled source capable of registering a kind='audio' item?
+
+    `transcribe_pending()` selects WHERE kind='audio' and returns 0 without a word
+    when nothing matches, so transcription can be enabled and silently transcribe
+    nothing forever. Only `ingest_dir` ever writes that kind.
+    """
+    from .ingest_dir import admits_audio
+    return any(admits_audio(s) for s in cfg.sources())
+
+
 def collect_all(cfg, store, since: datetime) -> dict[str, int]:
     """Run every enabled source; returns {source name: new item count}."""
     from . import claude_localdir, claude_sessions, codex_sessions, ingest_dir, telegram, gmail  # noqa: F401  (register)

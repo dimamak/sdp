@@ -1,4 +1,11 @@
-# Laptop-side setup companion: generates laptop/push.conf, verifies ssh, registers the task.
+# SERVER MODE ONLY. This is the laptop half of the two-machine setup: it
+# generates laptop/push.conf, verifies ssh, and registers the push task that
+# ships this laptop's files to an always-on server over SSH.
+#
+# If everything runs on this one machine (mode: laptop) you do not want this
+# script at all — there is no remote to push to. Run instead:
+#     python -m setup.wizard
+#
 # Run:  powershell -ExecutionPolicy Bypass -File setup\wizard_laptop.ps1
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)

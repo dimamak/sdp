@@ -23,13 +23,10 @@ from ..util import get_logger, window_start_iso
 log = get_logger("pipeline.digest")
 
 
-def _activity_timeline(path: Path, since: datetime | None, cap: int) -> str:
-    """Foreground-window log -> a compact timeline of non-coding activity.
-
-    Consecutive samples in the same app collapse into one line, so a day of work
-    reads as a handful of lines rather than hundreds of samples."""
+def _activity_rows(path: Path, since: datetime | None) -> list[tuple[str, str, str]]:
+    """(timestamp, app, title) samples from one foreground-window log."""
     if not path.exists():
-        return ""
+        return []
     rows = []
     try:
         # utf-8-sig tolerates a BOM from Windows-side writers
@@ -39,21 +36,43 @@ def _activity_timeline(path: Path, since: datetime | None, cap: int) -> str:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                ts = rec.get("ts")
+                ts = str(rec.get("ts") or "")
                 if since and ts:
                     try:
-                        if datetime.fromisoformat(str(ts).replace("Z", "+00:00")) < since:
+                        if datetime.fromisoformat(ts.replace("Z", "+00:00")) < since:
                             continue
                     except ValueError:
                         pass
-                rows.append((str(ts)[11:16], rec.get("app", "?"), rec.get("title", "")))
+                rows.append((ts, str(rec.get("app") or "?"), str(rec.get("title") or "")))
     except OSError:
-        return ""
+        return []
+    return rows
+
+
+def _activity_timeline(rows: list[tuple[str, str, str]], cap: int) -> str:
+    """Foreground-window samples -> a compact timeline of non-coding activity.
+
+    Consecutive samples in the same app collapse into one line, so a day of work
+    reads as a handful of lines rather than hundreds of samples. Rows from every
+    log file are merged before collapsing: the recorder rotates hourly, so one
+    day arrives as a dozen items that would otherwise render as a dozen
+    disconnected sections with the collapsing restarting in each.
+    """
     out, last_app = [], None
-    for hhmm, app, title in rows:
+    for ts, app, title in sorted(rows):
+        hhmm = ts[11:16]
         out.append(f"{hhmm} {title}" if app == last_app else f"{hhmm} [{app}] {title}")
         last_app = app
     return "\n".join(out)[:cap]
+
+
+def _read_note(path: Path, cap: int) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="replace").strip()[:cap]
+    except OSError:
+        return ""
 
 
 def _in_window(rec: dict, since: datetime | None) -> bool:
@@ -287,6 +306,8 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
     entries: list[tuple[str, str, str]] = []
     ids: list[int] = []
     skipped_stale = 0
+    activity_rows: list[tuple[str, str, str]] = []
+    activity_sources: list[str] = []
     for item in items:
         ids.append(item["id"])
         src = item["source"]
@@ -302,10 +323,10 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
         elif item["kind"] == "screenshot":
             entry = f"- Screenshot: {item['summary'] or Path(item['path'] or '').name}"
         elif item["kind"] == "activity_log":
-            body = _activity_timeline(Path(item["path"] or ""), window_start, per_item_cap)
-            if not body:
-                continue
-            entry = f"### What was on screen (non-coding activity)\n{body}"
+            activity_rows += _activity_rows(Path(item["path"] or ""), window_start)
+            if src not in activity_sources:
+                activity_sources.append(src)
+            continue  # merged into one timeline after the loop
         elif item["kind"] == "transcript":
             if not (item["summary"] or "").strip() or item["summary"].startswith("["):
                 continue
@@ -313,14 +334,32 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
             when = (item["ts"] or "")[11:16]
             entry = (f"### Spoken conversation {when} "
                      f"({meta.get('speech_seconds', '?')}s)\n{item['summary'][:per_item_cap]}")
+        elif item["kind"] == "note":
+            # ingest_dir stores dropped .txt/.md with no summary — the text is in
+            # the file, so read it here rather than dropping the item silently.
+            body = _read_note(Path(item["path"] or ""), per_item_cap) if item["path"] else ""
+            if not body:
+                body = (item["summary"] or "")[:per_item_cap]
+            if not body.strip():
+                continue
+            entry = f"### Note ({Path(item['path'] or 'note').name})\n{body}"
         else:
             body = (item["summary"] or "")[:per_item_cap]
             if not body.strip():
+                if item["kind"] == "file":
+                    log.info("no renderer for %s item %s — not in the digest",
+                             item["kind"], Path(item["path"] or "?").name)
                 continue
             meta = json.loads(item["meta_json"]) if item["meta_json"] else {}
             prefix = f"[{meta.get('chat')}] " if meta.get("chat") else ""
             entry = f"- {prefix}{body}"
         entries.append((item["ts"] or "", src, entry))
+
+    timeline = _activity_timeline(activity_rows, per_item_cap)
+    if timeline:
+        entries.append((min(ts for ts, _, _ in activity_rows),
+                        ", ".join(activity_sources),
+                        f"### What was on screen (non-coding activity)\n{timeline}"))
 
     if skipped_stale:
         log.info("skipped %d session file(s) touched in-window but with no messages in it",

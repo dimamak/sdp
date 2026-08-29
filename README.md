@@ -107,7 +107,8 @@ Want a shared, always-on server for a few people instead of one laptop? See
 | Claude Code / Codex / ChatGPT sessions | Your coding-agent transcripts | Read locally; covers Claude Code, the Codex CLI, and the ChatGPT desktop app |
 | Screenshots | Whatever you drop into a watched folder | Any OS |
 | Telegram, Gmail, WhatsApp | Your own message/mail history | All optional, all off by default; WhatsApp capture is read-only |
-| Call / office audio | Local speech-to-text on recordings you make, in whatever languages you actually speak | Off by default; recording today is Windows-only (see [Limitations](#limitations--non-goals)) |
+| Call / office audio | Local speech-to-text on recordings you make, in whatever languages you actually speak | Off by default; recording and transcription both run on Windows, macOS and Linux |
+| Screen activity | Which app and window was in the foreground, plus occasional screenshots — the non-coding half of the day | Off by default; not supported on Wayland (see [Limitations](#limitations--non-goals)) |
 
 Every source is opt-in and walked through by the wizard. `config.example.yaml`
 has the full field-by-field detail as inline comments.
@@ -206,12 +207,17 @@ wizard's own prompts.
   unofficial client, not WhatsApp's Business API. Read-only by design.
 - **Reddit is draft-assist only, never automated posting** (see
   [What it posts to](#what-it-posts-to)).
-- **Call/office audio recording is Windows-only today**: the recorder
-  scripts have no macOS/Linux equivalent yet. Transcription itself runs on
-  any OS once audio reaches the server.
-- **Laptop mode has no OS-level autostart.** `python -m server.bot.main`
-  needs to be left running yourself (a terminal, `screen`/`tmux`, or your
-  OS's own way of keeping a process alive).
+- **Audio and screen capture need the bot process to be running.** In laptop
+  mode both recorders are threads inside it, so capture stops when it stops.
+  The wizard registers an OS-native autostart (systemd `--user`, launchd, or
+  a Task Scheduler logon task) so it comes back at login, and `--doctor`
+  fails if the bot hasn't checked in.
+- **Screen activity capture doesn't work on Wayland.** There's no
+  compositor-independent way to read the foreground window, or to grab the
+  screen without a portal prompt per shot. The recorder refuses to start
+  there rather than logging `?` all day; an X11 session works. On macOS,
+  window *titles* additionally need Accessibility permission — without it you
+  get app names only.
 
 ## Contributing / Security / Licence
 

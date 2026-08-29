@@ -1,3 +1,8 @@
+# SERVER MODE ONLY — this registers the nightly SSH push to a remote server.
+# In laptop mode there is no remote and nothing to push; the autostart task you
+# want there is registered by `python -m setup.wizard` (setup/autostart.py),
+# which keeps the bot process itself running.
+#
 # Registers the Windows Scheduled Task that runs push_daily.sh nightly via Git Bash.
 # Uses an XML task definition so we get, without needing admin rights:
 #   - StartWhenAvailable: a run missed because the laptop was off/asleep fires
