@@ -18,7 +18,8 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--client", required=True, help="OAuth client JSON downloaded from Google Cloud Console")
+    ap.add_argument("--client", required=True,
+                    help="OAuth client JSON downloaded from Google Cloud Console")
     ap.add_argument("--out", default="gmail-token.json")
     args = ap.parse_args(argv)
 

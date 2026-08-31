@@ -8,8 +8,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import register
 from ..util import day_of, get_logger
+from . import register
 
 log = get_logger("harvest.telegram")
 

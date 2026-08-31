@@ -7,8 +7,8 @@ instances; `type` selects the adapter here. Nothing instance-specific lives in c
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 REGISTRY: dict[str, Callable] = {}
 
@@ -54,8 +54,15 @@ def can_produce_audio(cfg) -> bool:
 
 def collect_all(cfg, store, since: datetime) -> dict[str, int]:
     """Run every enabled source; returns {source name: new item count}."""
-    from . import claude_localdir, claude_sessions, codex_sessions, ingest_dir, telegram, gmail  # noqa: F401  (register)
     from ..util import get_logger
+    from . import (  # noqa: F401  (register)
+        claude_localdir,
+        claude_sessions,
+        codex_sessions,
+        gmail,
+        ingest_dir,
+        telegram,
+    )
 
     refused = set(unsafe_sources(cfg))
     results = {}

@@ -9,17 +9,23 @@ import time
 
 import pytest
 
-from server.capture.audio import (VETTED_SUFFIX, capture_args, capture_input_args,
-                                  parse_devices, parse_speech_seconds, preferred_device,
-                                  sweep)
-
+from server.capture.audio import (
+    VETTED_SUFFIX,
+    capture_args,
+    capture_input_args,
+    parse_devices,
+    parse_speech_seconds,
+    preferred_device,
+    sweep,
+)
 
 # ---------------------------------------------------------------------------
 # capture_args
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("platform,device,expected", [
-    ("win32", "Microphone Array (Realtek)", ["-f", "dshow", "-i", "audio=Microphone Array (Realtek)"]),
+    ("win32", "Microphone Array (Realtek)",
+     ["-f", "dshow", "-i", "audio=Microphone Array (Realtek)"]),
     ("darwin", "1", ["-f", "avfoundation", "-i", ":1"]),
     ("linux", "alsa_input.pci-0000_00_1f.3", ["-f", "pulse", "-i", "alsa_input.pci-0000_00_1f.3"]),
     ("linux", "", ["-f", "pulse", "-i", "default"]),
@@ -200,8 +206,8 @@ def test_mic_warning_appears_after_a_silent_streak_and_clears(tmp_path):
 def test_record_loop_never_starts_ffmpeg_while_paused(tmp_path, monkeypatch):
     import threading
 
-    from server.config import Config
     from server.capture.audio import record_loop
+    from server.config import Config
 
     (tmp_path / "PAUSED").write_text("")
     monkeypatch.setattr("server.capture.audio.ensure_ffmpeg", lambda *a: (True, "stub"))

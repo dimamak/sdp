@@ -27,8 +27,8 @@ import threading
 import time
 from pathlib import Path
 
-from . import PAUSE_FILE, ensure_ffmpeg
 from ..util import get_logger
+from . import PAUSE_FILE, ensure_ffmpeg
 
 log = get_logger("capture.audio")
 
@@ -101,7 +101,8 @@ def parse_devices(platform: str, text: str) -> list[str]:
     if platform == "darwin":
         tail = text.split("AVFoundation audio devices", 1)
         # "[0] MacBook Pro Microphone" -> the index is what -i takes
-        return re.findall(r"^\[[^\]]+\]\s*\[(\d+)\]", tail[-1], re.MULTILINE) if len(tail) > 1 else []
+        return (re.findall(r"^\[[^\]]+\]\s*\[(\d+)\]", tail[-1], re.MULTILINE)
+                if len(tail) > 1 else [])
     return []
 
 

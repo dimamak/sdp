@@ -16,8 +16,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import register
 from ..util import day_of, get_logger
+from . import register
 
 log = get_logger("harvest.codex")
 
@@ -53,7 +53,8 @@ def _peek_cwd(jsonl: Path, max_lines: int = 50) -> str | None:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if not isinstance(rec, dict) or rec.get("type") not in ("session_meta", "turn_context"):
+                if (not isinstance(rec, dict)
+                        or rec.get("type") not in ("session_meta", "turn_context")):
                     continue
                 payload = rec.get("payload") or rec
                 if isinstance(payload, dict):

@@ -6,3 +6,24 @@ requires-python = ">=3.10"
 # Not packaged/published — this repo is run in place from a clone, per the
 # README. requires-python exists to back the version badge with something
 # checkable, not to make this pip-installable.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "S", "I", "UP"]
+# S603/S607: every subprocess call in this project already uses the safe
+# pattern (list args, no shell=True) and calls tools (docker, ffmpeg, git...)
+# by name so they resolve on PATH across Windows/macOS/Linux — hardcoding
+# absolute paths would break portability, not improve security. The real
+# risk these two rules exist for is covered by S602 (shell=True), which
+# stays enabled and is reviewed per call site below.
+ignore = ["S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+# S101: assert is how pytest tests assert.
+# S104/S108/S314: hardcoded "0.0.0.0"/"/tmp/..." strings and xml parsing here
+# are test fixtures/assertions against this project's own pure functions, not
+# real binds, real temp-file I/O, or untrusted XML.
+"tests/**" = ["S101", "S104", "S108", "S314"]

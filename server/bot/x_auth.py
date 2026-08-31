@@ -28,14 +28,14 @@ from requests_oauthlib import OAuth1Session
 
 from ..config import Config
 
-REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token"
+REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token"  # noqa: S105 -- endpoint URL, not a credential
 AUTHORIZE_URL = "https://api.twitter.com/oauth/authorize"
-ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token"
+ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token"  # noqa: S105 -- endpoint URL, not a credential
 
 
 def _env_set(env_path: Path, key: str, value: str) -> None:
     lines = env_path.read_text().splitlines() if env_path.exists() else []
-    lines = [l for l in lines if not l.startswith(f"{key}=")]
+    lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
     lines.append(f"{key}={value}")
     env_path.write_text("\n".join(lines) + "\n")
     try:

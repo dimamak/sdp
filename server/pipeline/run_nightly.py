@@ -77,7 +77,8 @@ def prune_old_images(cfg, store) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true", help="harvest + digest only; no draft, no Telegram")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="harvest + digest only; no draft, no Telegram")
     ap.add_argument("--config", default=None)
     ap.add_argument("--day", default=None, help="override target day (YYYY-MM-DD)")
     ap.add_argument("--force", action="store_true",
@@ -147,7 +148,8 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     log.info("digest: %d chars from %d items", len(digest), len(item_ids))
 
     if args.dry_run:
-        print(f"[dry-run] day={day} harvest={results} digest_chars={len(digest)} items={len(item_ids)}")
+        print(f"[dry-run] day={day} harvest={results} "
+              f"digest_chars={len(digest)} items={len(item_ids)}")
         if digest:
             (store.dir / f"digest-{day}-dryrun.md").write_text(digest, encoding="utf-8")
             print(f"[dry-run] digest written to {store.dir / f'digest-{day}-dryrun.md'}")
@@ -168,7 +170,8 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
     store.mark_used(item_ids, day)
 
     if not draft_ids:
-        notify(cfg, f"🌙 Social Daily Poster: harvested {sum(v for v in results.values() if v > 0)} items for {day}, "
+        notify(cfg, f"🌙 Social Daily Poster: harvested "
+                    f"{sum(v for v in results.values() if v > 0)} items for {day}, "
                     "but nothing post-worthy today.")
         return 0
 
@@ -181,9 +184,10 @@ def _run(cfg: Config, args: argparse.Namespace) -> int:
         from ..bot.linkedin_client import LinkedInClient
         days_left = LinkedInClient(cfg).days_until_expiry()
         if days_left is not None and days_left < 7:
-            notify(cfg, f"⚠️ LinkedIn access token expires in {days_left} days — re-run: python -m server.bot.linkedin_auth")
-    except Exception:
-        pass
+            notify(cfg, f"⚠️ LinkedIn access token expires in {days_left} days — "
+                        "re-run: python -m server.bot.linkedin_auth")
+    except Exception as e:
+        log.debug("LinkedIn token expiry check failed: %s", e)
     return 0
 
 

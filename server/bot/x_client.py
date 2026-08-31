@@ -83,7 +83,8 @@ class XClient:
     def _auth(self) -> OAuth1:
         if not self.configured():
             raise RuntimeError(
-                f"{', '.join(SECRET_KEYS)} not set in .env — run: python -m setup.wizard --source x")
+                f"{', '.join(SECRET_KEYS)} not set in .env — "
+                "run: python -m setup.wizard --source x")
         return OAuth1(
             self.cfg.secret("X_API_KEY"),
             client_secret=self.cfg.secret("X_API_SECRET"),
@@ -126,7 +127,8 @@ class XClient:
             media_id = "urn:x:media:DRYRUN" if image_path else None
             if media_id:
                 body["media"] = {"media_ids": [media_id]}
-            log.info("dry-run POST %s/2/tweets\n%s", API, json.dumps(body, indent=2, ensure_ascii=False))
+            log.info("dry-run POST %s/2/tweets\n%s", API,
+                     json.dumps(body, indent=2, ensure_ascii=False))
             return "DRYRUN", media_id
 
         media_id = None
@@ -179,7 +181,8 @@ def main(argv=None) -> int:
     ap.add_argument("--config", default=None)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the exact /2/tweets body; no network at all")
-    ap.add_argument("--image", default=None, help="attach this file (with --dry-run or --test-post)")
+    ap.add_argument("--image", default=None,
+                    help="attach this file (with --dry-run or --test-post)")
     ap.add_argument("--check", action="store_true",
                     help="prove the keys authenticate via GET /2/users/me; posts nothing")
     ap.add_argument("--test-post", action="store_true",

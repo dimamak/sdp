@@ -96,7 +96,7 @@ def run_codex(cfg, prompt: str, *, allow_read_dirs: list[str] | None = None,
         try:
             text = out_path.read_text(encoding="utf-8").strip()
         except OSError as e:
-            raise RuntimeError(f"codex exec produced no output file: {e}")
+            raise RuntimeError(f"codex exec produced no output file: {e}") from e
 
     if not text:
         raise RuntimeError("codex exec returned empty output")

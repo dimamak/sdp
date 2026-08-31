@@ -144,7 +144,8 @@ class Store:
                  meta: dict | None = None) -> bool:
         """Insert an item; returns True if newly inserted (dedup on source+external_id)."""
         cur = self.db.execute(
-            "INSERT OR IGNORE INTO items(source, external_id, day, ts, kind, path, summary, meta_json)"
+            "INSERT OR IGNORE INTO items(source, external_id, day, ts, kind, path, summary,"
+            " meta_json)"
             " VALUES(?,?,?,?,?,?,?,?)",
             (source, external_id, day, ts, kind, path, summary,
              json.dumps(meta, ensure_ascii=False) if meta else None),
@@ -164,7 +165,8 @@ class Store:
         ).fetchall()
 
     def mark_used(self, item_ids: list[int], day: str) -> None:
-        self.db.executemany("UPDATE items SET used_in_draft=? WHERE id=?", [(day, i) for i in item_ids])
+        self.db.executemany(
+            "UPDATE items SET used_in_draft=? WHERE id=?", [(day, i) for i in item_ids])
         self.db.commit()
 
     def set_item_summary(self, item_id: int, summary: str) -> None:
@@ -201,7 +203,8 @@ class Store:
                   alternates: list | None = None) -> int:
         cur = self.db.execute(
             "INSERT INTO drafts(day, text, rationale, alternates_json) VALUES(?,?,?,?)",
-            (day, text, rationale, json.dumps(alternates, ensure_ascii=False) if alternates else None),
+            (day, text, rationale,
+             json.dumps(alternates, ensure_ascii=False) if alternates else None),
         )
         self.db.commit()
         return cur.lastrowid
@@ -210,9 +213,12 @@ class Store:
         return self.db.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
 
     def update_draft(self, draft_id: int, **fields) -> None:
+        # column names come from **fields, but callers always pass fixed keyword
+        # names from this codebase (never a caller-controlled dict) — values are
+        # parameterized, so this isn't string-built from untrusted input
         cols = ", ".join(f"{k}=?" for k in fields)
         self.db.execute(
-            f"UPDATE drafts SET {cols}, updated_at=datetime('now') WHERE id=?",
+            f"UPDATE drafts SET {cols}, updated_at=datetime('now') WHERE id=?",  # noqa: S608
             (*fields.values(), draft_id),
         )
         self.db.commit()
@@ -282,7 +288,8 @@ class Store:
     def set_day_session(self, day: str, session_id: str, backend: str = "claude") -> None:
         self.db.execute(
             "INSERT INTO day_sessions(day, session_id, backend) VALUES(?,?,?)"
-            " ON CONFLICT(day) DO UPDATE SET session_id=excluded.session_id, backend=excluded.backend",
+            " ON CONFLICT(day) DO UPDATE SET session_id=excluded.session_id,"
+            " backend=excluded.backend",
             (day, session_id, backend),
         )
         self.db.commit()
@@ -329,8 +336,10 @@ class Store:
         return cur.lastrowid
 
     def update_image(self, image_id: int, **fields) -> None:
+        # see update_draft() above: column names are always fixed kwargs from
+        # call sites in this codebase, not caller-controlled
         cols = ", ".join(f"{k}=?" for k in fields)
-        self.db.execute(f"UPDATE draft_images SET {cols} WHERE id=?",
+        self.db.execute(f"UPDATE draft_images SET {cols} WHERE id=?",  # noqa: S608
                         (*fields.values(), image_id))
         self.db.commit()
 
@@ -379,8 +388,10 @@ class Store:
         return cur.lastrowid
 
     def update_x(self, x_id: int, **fields) -> None:
+        # see update_draft() above: column names are always fixed kwargs from
+        # call sites in this codebase, not caller-controlled
         cols = ", ".join(f"{k}=?" for k in fields)
-        self.db.execute(f"UPDATE draft_x SET {cols} WHERE id=?", (*fields.values(), x_id))
+        self.db.execute(f"UPDATE draft_x SET {cols} WHERE id=?", (*fields.values(), x_id))  # noqa: S608
         self.db.commit()
 
     def latest_x(self, draft_id: int, status: str | None = None) -> sqlite3.Row | None:

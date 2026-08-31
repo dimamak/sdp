@@ -1,15 +1,14 @@
 """Draft writer: digest → claude -p → draft row → Telegram delivery."""
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
 import requests
 
+from ..util import get_logger
 from .claude_cli import extract_json
 from .llm import run_llm
-from ..util import get_logger
 
 log = get_logger("pipeline.draft")
 
@@ -42,7 +41,8 @@ Text:
 
 Return ONLY a JSON object, no other text:
 {{"cleaned_text": "the fully rewritten text, ready to publish",
-  "flagged": "one short note on any thin claim, unsupported number, or contradiction left for a human to judge, or empty string if none"}}
+  "flagged": "one short note on any thin claim, unsupported number, or contradiction left for a\
+ human to judge, or empty string if none"}}
 """
 
 
@@ -293,7 +293,8 @@ def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
     """
     extra = ""
     if feedback:
-        extra = X_REWRITE_REVISION.format(prev_text=prev_text or "(not recorded)", feedback=feedback)
+        extra = X_REWRITE_REVISION.format(
+            prev_text=prev_text or "(not recorded)", feedback=feedback)
     always_tags = _always_hashtags(cfg)
     if always_tags:
         tag_str = " ".join(f"#{t}" for t in always_tags)
@@ -324,14 +325,16 @@ def x_rewrite(cfg, day: str, session_id: str | None, post_text: str,
     if len(text) > limit:
         over = len(text) - limit
         retry_prompt = prompt + X_REWRITE_REVISION.format(
-            prev_text=text, feedback=f"that was {len(text)} characters, {over} over the "
-                                     f"{limit} limit. Cut content, don't just trim words off the end.")
+            prev_text=text,
+            feedback=f"that was {len(text)} characters, {over} over the {limit} limit. "
+                     f"Cut content, don't just trim words off the end.")
         text = _ask(retry_prompt)
     cleaned = deai_cleanup(cfg, text)
     if len(cleaned) <= limit:
         text = cleaned
     else:
-        log.warning("deai cleanup pushed X rewrite over the %d limit (%d chars) — keeping pre-cleanup text",
+        log.warning("deai cleanup pushed X rewrite over the %d limit (%d chars) — keeping "
+                    "pre-cleanup text",
                     limit, len(cleaned))
     return text
 
@@ -409,7 +412,8 @@ def reddit_title(cfg, day, session_id, post_text,
     if len(cleaned) <= limit:
         title = cleaned
     else:
-        log.warning("deai cleanup pushed reddit title over the %d limit (%d chars) — keeping pre-cleanup title",
+        log.warning("deai cleanup pushed reddit title over the %d limit (%d chars) — keeping "
+                    "pre-cleanup title",
                     limit, len(cleaned))
     return title
 

@@ -17,9 +17,9 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from ..util import get_logger
 from . import register
 from .claude_common import harvest_dir
-from ..util import get_logger
 
 log = get_logger("harvest.claude_sessions")
 
@@ -43,7 +43,7 @@ def resolve_session_ids(fcfg: dict, since_iso: str) -> set[str] | None:
         return {str(r[0]) for r in rows if r[0]}
 
     if strategy == "command":
-        out = subprocess.run(
+        out = subprocess.run(  # noqa: S602 -- the filter command IS the adapter config, by design
             fcfg["command"].replace("$SINCE", since_iso),
             shell=True, capture_output=True, text=True, timeout=120,
         )

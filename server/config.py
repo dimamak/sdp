@@ -35,7 +35,7 @@ class Config:
         self.path = path
 
     @classmethod
-    def load(cls, config_path: str | os.PathLike | None = None) -> "Config":
+    def load(cls, config_path: str | os.PathLike | None = None) -> Config:
         p = Path(config_path or os.environ.get("DAILYPOST_CONFIG") or REPO_ROOT / "config.yaml")
         data = {}
         if p.exists():

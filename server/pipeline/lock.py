@@ -16,7 +16,7 @@ from __future__ import annotations
 import contextlib
 import sys
 from pathlib import Path
-from typing import IO, Iterator
+from typing import IO, Iterator  # noqa: UP035 -- unchanged, needs a 3-OS run first (CLAUDE.md)
 
 if sys.platform == "win32":
     import msvcrt

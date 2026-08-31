@@ -24,8 +24,14 @@ from pathlib import Path
 from urllib.parse import quote
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
-                          ContextTypes, MessageHandler, filters)
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from ..config import Config
 from ..pipeline.draft import converse, image_brief, reddit_body, reddit_title, x_rewrite
@@ -33,7 +39,8 @@ from ..pipeline.image_gen import ImageGenError, generate_image
 from ..store import Store
 from ..util import get_logger
 from .linkedin_client import LinkedInClient, feed_url
-from .x_client import XClient, tweet_url as x_tweet_url
+from .x_client import XClient
+from .x_client import tweet_url as x_tweet_url
 
 log = get_logger("bot")
 
@@ -118,7 +125,8 @@ def reddit_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
 
 def reddit_submit_link(subreddit: str, title: str, body: str,
                        max_chars: int = 4000) -> tuple[tuple[str, bool], tuple[str, bool]]:
-    """Prefilled Reddit submit URLs. Returns ((app_url, body_included), (browser_url, body_included)).
+    """Prefilled Reddit submit URLs. Returns ((app_url, body_included),
+    (browser_url, body_included)).
 
     quote(), not quote_plus() — Reddit's form reads a literal '+' in the body.
     If a variant's full URL would exceed max_chars, its body is dropped from
@@ -310,8 +318,8 @@ class Bot:
                     try:
                         await context.bot.edit_message_reply_markup(
                             self.chat_id, int(prev["tg_message_id"]), reply_markup=None)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("could not clear buttons on stale image message: %s", e)
 
             await status.delete()
             # photo carries the alt text (short, and worth reviewing); the post text
@@ -429,8 +437,8 @@ class Bot:
                     try:
                         await context.bot.edit_message_reply_markup(
                             self.chat_id, int(prev["tg_message_id"]), reply_markup=None)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("could not clear buttons on stale tweet message: %s", e)
 
             await status.delete()
             sent = await context.bot.send_message(
@@ -568,8 +576,8 @@ class Bot:
                 try:
                     await context.bot.edit_message_reply_markup(
                         self.chat_id, int(prev_msg_id), reply_markup=None)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("could not clear buttons on stale reddit delivery message: %s", e)
 
             await status.delete()
             await self._send_reddit_delivery(context, draft_id, subreddit, title, body)
@@ -656,7 +664,8 @@ class Bot:
         elif action == "xpost":
             xrow = self.store.latest_x(draft_id, status="pending_review")
             if xrow is None:
-                await context.bot.send_message(self.chat_id, "No X candidate is waiting on that draft.")
+                await context.bot.send_message(
+                    self.chat_id, "No X candidate is waiting on that draft.")
                 return
             await q.edit_message_reply_markup(None)
             await self.publish_x(context, draft, xrow)
@@ -693,7 +702,8 @@ class Bot:
 
         elif action == "rpost":
             if draft["reddit_status"] != "pending":
-                await context.bot.send_message(self.chat_id, "No Reddit link is waiting on that draft.")
+                await context.bot.send_message(
+                    self.chat_id, "No Reddit link is waiting on that draft.")
                 return
             await q.edit_message_reply_markup(None)
             subreddit = str(self.cfg.get("reddit.subreddit", "buildinpublic"))
@@ -803,8 +813,8 @@ class Bot:
                 try:
                     await context.bot.edit_message_reply_markup(
                         self.chat_id, int(prev_msg_id), reply_markup=None)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("could not clear buttons on stale reddit edit message: %s", e)
             self.store.set_reddit(redit["id"], reddit_status="pending", reddit_title=title)
             await self._send_reddit_delivery(context, redit["id"], subreddit, title, body)
             return
@@ -926,6 +936,7 @@ def start_waha_webhook(cfg: Config):
         import time
 
         import uvicorn
+
         from .waha_webhook import build_app
         app = build_app(cfg, Store(cfg.path_of("store_dir")))  # own Store: sqlite per-thread
         # At boot the docker bridge may not exist yet, so binding to the gateway

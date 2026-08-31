@@ -96,7 +96,8 @@ def test_laptop_mode_never_defers_even_with_no_heartbeat(tmp_path, monkeypatch):
     assert calls, "build_digest should have been reached — laptop mode skips the gate"
 
 
-def test_server_mode_defers_when_laptop_has_not_checked_in_and_before_deadline(tmp_path, monkeypatch):
+def test_server_mode_defers_when_laptop_has_not_checked_in_and_before_deadline(
+        tmp_path, monkeypatch):
     # deadline_hour=24: "local_now.hour < 24" is always true, so the deferral
     # branch is always taken here regardless of when the test runs.
     rc, store, calls = _run_it(tmp_path, {
@@ -104,7 +105,8 @@ def test_server_mode_defers_when_laptop_has_not_checked_in_and_before_deadline(t
         "pipeline": {"wait_for_laptop": True, "wait_deadline_hour": 24},
     }, monkeypatch)
     assert rc == 0
-    assert not calls, "build_digest should not run — the laptop hasn't checked in and it's before the deadline"
+    assert not calls, ("build_digest should not run — the laptop hasn't checked in "
+                        "and it's before the deadline")
 
 
 def test_server_mode_proceeds_past_deadline_even_without_heartbeat(tmp_path, monkeypatch):

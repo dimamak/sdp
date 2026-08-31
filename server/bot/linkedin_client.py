@@ -140,7 +140,8 @@ class LinkedInClient:
     def _token(self) -> dict:
         if self._tok is None:
             if not (self.token_file and self.token_file.exists()):
-                raise RuntimeError("LinkedIn token file missing — run: python -m server.bot.linkedin_auth")
+                raise RuntimeError(
+                    "LinkedIn token file missing — run: python -m server.bot.linkedin_auth")
             self._tok = json.loads(self.token_file.read_text())
         return self._tok
 
@@ -252,7 +253,8 @@ class LinkedInClient:
         """Publish a post, optionally with an image. Returns (post_urn, image_urn)."""
         if dry_run or self.cfg.get("linkedin.dry_run", False):
             body = self._post_body(text, "urn:li:image:DRYRUN" if image_path else None, alt_text)
-            log.info("dry-run POST %s/posts\n%s", REST, json.dumps(body, indent=2, ensure_ascii=False))
+            log.info("dry-run POST %s/posts\n%s", REST,
+                     json.dumps(body, indent=2, ensure_ascii=False))
             return "urn:li:share:DRYRUN", ("urn:li:image:DRYRUN" if image_path else None)
 
         image_urn = self.upload_image(Path(image_path)) if image_path else None
@@ -296,7 +298,8 @@ def main(argv=None) -> int:
     ap.add_argument("--config", default=None)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the exact /rest/posts body; no network at all")
-    ap.add_argument("--image", default=None, help="attach this file (with --dry-run or --test-post)")
+    ap.add_argument("--image", default=None,
+                    help="attach this file (with --dry-run or --test-post)")
     ap.add_argument("--check", action="store_true",
                     help="prove versioned-API access via initializeUpload; publishes nothing")
     ap.add_argument("--test-post", action="store_true",

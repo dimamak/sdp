@@ -32,8 +32,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import PAUSE_FILE
 from ..util import get_logger
+from . import PAUSE_FILE
 
 log = get_logger("capture.activity")
 
@@ -113,8 +113,8 @@ class MacBackend(Backend):
     name = "macos"
 
     def __init__(self):
-        from AppKit import NSWorkspace
         import Quartz
+        from AppKit import NSWorkspace
         self._workspace = NSWorkspace
         self._quartz = Quartz
         self.titles_available = self._probe_titles()
@@ -257,7 +257,7 @@ def ahash(image) -> str:
 def hash_distance(a: str, b: str) -> int:
     if not a or not b or len(a) != len(b):
         return 999
-    return sum(x != y for x, y in zip(a, b))
+    return sum(x != y for x, y in zip(a, b, strict=True))
 
 
 def save_screenshot(path: Path, prev_hash: str, max_width: int, quality: int) -> str | None:
@@ -301,7 +301,9 @@ def status(cfg) -> str:
     if current.exists():
         lines = sum(1 for _ in current.open(encoding="utf-8", errors="replace"))
     shots = len(list(out_dir.glob("*.jpg")))
-    return f"activity capture: on, {lines} window change(s) this hour, {shots} screenshot(s) waiting"
+    return (
+        f"activity capture: on, {lines} window change(s) this hour, "
+        f"{shots} screenshot(s) waiting")
 
 
 def sample_loop(cfg, stop_event: threading.Event | None = None,

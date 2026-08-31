@@ -15,7 +15,6 @@ import os
 import re
 import secrets
 import shutil
-import sqlite3
 import subprocess
 import sys
 import time
@@ -63,7 +62,7 @@ def ports_used_by_other_instances() -> set[int]:
             continue
         try:
             d = yaml.safe_load(other.read_text(encoding="utf-8")) or {}
-        except Exception:
+        except Exception:  # noqa: S112 -- a sibling instance's config is unreadable/malformed; skip it
             continue
         for s in d.get("sources", []) or []:
             if s.get("type") != "whatsapp":
@@ -165,7 +164,7 @@ def save_data(data: dict) -> None:
 
 def env_set(key: str, value: str) -> None:
     lines = ENV.read_text().splitlines() if ENV.exists() else []
-    lines = [l for l in lines if not l.startswith(f"{key}=")]
+    lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
     lines.append(f"{key}={value}")
     ENV.write_text("\n".join(lines) + "\n")
     try:
@@ -177,9 +176,9 @@ def env_set(key: str, value: str) -> None:
 def env_get(key: str) -> str | None:
     if not ENV.exists():
         return None
-    for l in ENV.read_text().splitlines():
-        if l.startswith(f"{key}="):
-            return l.split("=", 1)[1].strip() or None
+    for ln in ENV.read_text().splitlines():
+        if ln.startswith(f"{key}="):
+            return ln.split("=", 1)[1].strip() or None
     return None
 
 
@@ -246,8 +245,9 @@ def webhook_bind_host() -> tuple[str, str]:
         capture_output=True, text=True).stdout.strip()
     if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", gw):
         return gw, f"docker bridge gateway {gw}"
-    return "0.0.0.0", ("could not read the docker bridge gateway — binding every "
-                       "interface. Firewall this port if the host is exposed")
+    return "0.0.0.0", (  # noqa: S104 -- deliberate fallback, surfaced to the user with a firewall warning
+        "could not read the docker bridge gateway — binding every "
+        "interface. Firewall this port if the host is exposed")
 
 
 def get_source(data: dict, type_: str) -> dict | None:
@@ -284,11 +284,12 @@ def step_base(data: dict) -> None:
         # Every instance needs its OWN store: a shared dailypost.db would mix two
         # people's items and drafts together.
         suffix = f"/{INSTANCE}" if INSTANCE else ""
-        data["install_root"] = ask("install root", data.get("install_root") or f"/opt/dailypost{suffix}")
+        data["install_root"] = ask("install root",
+                                   data.get("install_root") or f"/opt/dailypost{suffix}")
         root = data["install_root"]
         if INSTANCE and not root.rstrip("/").endswith(f"/{INSTANCE}"):
-            warn(f"install root does not include the instance name — make sure it is not "
-                 f"shared with another instance")
+            warn("install root does not include the instance name — make sure it is not "
+                 "shared with another instance")
         data["store_dir"] = ask("store dir", data.get("store_dir") or f"{root}/data")
         data["ingest_dir"] = ask("ingest dir", data.get("ingest_dir") or f"{root}/ingest")
         data["logs_dir"] = ask("logs dir", data.get("logs_dir") or f"{root}/logs")
@@ -367,7 +368,8 @@ def step_llm(data: dict) -> None:
     elif have_claude:
         raw = "claude"
     else:
-        raw = ask("neither CLI was found on PATH — which will you install? (claude|codex)", "claude")
+        raw = ask("neither CLI was found on PATH — which will you install? (claude|codex)",
+                  "claude")
         warn(f"install the {raw} CLI and log in before running the pipeline")
     choice = "codex" if raw.strip().lower().startswith("co") else "claude"
     pl["backend"] = choice
@@ -410,11 +412,13 @@ def step_claude(data: dict) -> None:
                              "name": "claude-server-cli", "projects_dir": d})
     codex_default = str(Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser())
     have_codex_dir = Path(codex_default).exists()
-    if yes("harvest Codex CLI / ChatGPT desktop sessions on THIS machine?", laptop and have_codex_dir):
+    if yes("harvest Codex CLI / ChatGPT desktop sessions on THIS machine?",
+           laptop and have_codex_dir):
         d = ask("Codex home dir (holds sessions/ and archived_sessions/)", codex_default)
         upsert_source(data, {"type": "codex_sessions", "enabled": True,
                              "name": "codex", "codex_home": d})
-    if not laptop and yes("harvest sessions from a shared/multi-user host DB (filtered to you)?", False):
+    if not laptop and yes("harvest sessions from a shared/multi-user host DB (filtered to you)?",
+                          False):
         projects_dir = ask("projects dir holding the JSONL files")
         strategy = ask("filter strategy (all|sql|command|id_file)", "sql")
         fcfg: dict = {"strategy": strategy}
@@ -482,7 +486,7 @@ def _ffmpeg_or_hint() -> bool:
     runnable = (sys.platform == "win32" and shutil.which("winget")) or \
                (sys.platform == "darwin" and shutil.which("brew"))
     if runnable and yes(f"run `{cmd}` now?", True):
-        subprocess.run(cmd, shell=True)
+        subprocess.run(cmd, shell=True)  # noqa: S602 -- cmd is one of FFMPEG_INSTALL_HINT's fixed strings
         present, msg = ensure_ffmpeg()
         (ok if present else bad)(msg)
     if not present:
@@ -538,7 +542,8 @@ def step_audio(data: dict) -> None:
         out_dir = ask("audio spool dir", audio.get("out_dir") or f"{data['ingest_dir']}/audio")
         Path(os.path.expanduser(out_dir)).mkdir(parents=True, exist_ok=True)
         audio["out_dir"] = out_dir
-        audio["device"] = _pick_device(audio.get("device", "")) if present else audio.get("device", "")
+        audio["device"] = (_pick_device(audio.get("device", "")) if present
+                           else audio.get("device", ""))
         fix_owner(data, out_dir)
         # The recorder writes into this same directory, so the drainer has to be
         # narrow: only vetted segments (`*.speech.opus`), never the control files,
@@ -723,7 +728,8 @@ def step_gmail(data: dict) -> None:
         return
     if data.get("mode") != "laptop":
         print("  OAuth needs a browser. On your laptop (same repo):")
-        print("    python -m setup.gmail_auth --client gmail-oauth-client.json --out gmail-token.json")
+        print("    python -m setup.gmail_auth --client gmail-oauth-client.json "
+              "--out gmail-token.json")
         print(f"  then copy gmail-token.json to this server at: {token_file}")
         return
     # Laptop mode has the browser right here, so there is nothing to copy —
@@ -754,7 +760,8 @@ def step_gmail(data: dict) -> None:
 
 def step_whatsapp(data: dict) -> None:
     print("\n== WhatsApp (WAHA, read-only) ==")
-    if not yes("enable WhatsApp capture via self-hosted WAHA?", get_source(data, "whatsapp") is not None):
+    if not yes("enable WhatsApp capture via self-hosted WAHA?",
+               get_source(data, "whatsapp") is not None):
         return
     if not shutil.which("docker"):
         bad("docker not found — install docker first")
@@ -817,8 +824,8 @@ def step_whatsapp(data: dict) -> None:
             ["docker", "inspect", "--format",
              "{{range .Config.Env}}{{println .}}{{end}}", container],
             capture_output=True, text=True).stdout
-        shared_key = next((l.split("=", 1)[1] for l in found.splitlines()
-                           if l.startswith("WAHA_API_KEY=")), None)
+        shared_key = next((ln.split("=", 1)[1] for ln in found.splitlines()
+                           if ln.startswith("WAHA_API_KEY=")), None)
         if shared_key:
             ok("read WAHA_API_KEY from the running container")
         else:
@@ -834,7 +841,7 @@ def step_whatsapp(data: dict) -> None:
         waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
 
     gw, why = webhook_bind_host()
-    (warn if gw == "0.0.0.0" else ok)(f"webhook binds on {gw} — {why}")
+    (warn if gw == "0.0.0.0" else ok)(f"webhook binds on {gw} — {why}")  # noqa: S104 -- comparison, not a bind
 
     upsert_source(data, {"type": "whatsapp", "enabled": True,
                          "waha_url": f"http://127.0.0.1:{waha_port}",
@@ -846,7 +853,8 @@ def step_whatsapp(data: dict) -> None:
                "WAHA_PORT": str(waha_port), "WAHA_CONTAINER": container,
                "COMPOSE_PROJECT_NAME": container}
         subprocess.run(["docker", "compose", "-f", str(compose), "up", "-d"], check=True, env=env)
-        ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable from the internet)")
+        ok(f"WAHA container up (bound to 127.0.0.1:{waha_port} only — not reachable "
+           f"from the internet)")
     print("  RULES: read-only. Never send through WAHA; don't bulk-backfill history.")
     if yes("pair WhatsApp now (QR code shown right here in the terminal)?"):
         step_pair(data)
@@ -971,7 +979,8 @@ def step_linkedin(data: dict) -> None:
         except Exception as e:
             bad(f"OAuth failed: {e} — retry with: python -m setup.wizard --source linkedin")
     else:
-        print("  Later: python -m setup.wizard --source linkedin  (or python -m server.bot.linkedin_auth)")
+        print("  Later: python -m setup.wizard --source linkedin  "
+              "(or python -m server.bot.linkedin_auth)")
 
 
 def step_x(data: dict) -> None:
@@ -1035,8 +1044,8 @@ def step_x(data: dict) -> None:
 
     if yes("verify the keys now via GET /2/users/me? (reads only, posts nothing)"):
         save_data(data)
-        from server.config import Config
         from server.bot.x_client import XClient
+        from server.config import Config
         try:
             import requests
             client = XClient(Config.load(str(CONFIG)))
@@ -1123,8 +1132,9 @@ def step_laptop(data: dict) -> None:
 
     host = data.get("ssh_host")
     if not host:
-        guess = subprocess.run("curl -s --max-time 5 ifconfig.me", shell=True,
-                               capture_output=True, text=True).stdout.strip()
+        guess = subprocess.run(  # noqa: S602 -- fixed literal command, no interpolation
+            "curl -s --max-time 5 ifconfig.me", shell=True,
+            capture_output=True, text=True).stdout.strip()
         host = ask("hostname or IP the laptop will ssh to", guess or "")
         data["ssh_host"] = host
 
@@ -1132,8 +1142,8 @@ def step_laptop(data: dict) -> None:
     try:
         import pwd
         keys_file = Path(pwd.getpwnam(user).pw_dir) / ".ssh" / "authorized_keys"
-        entries = [l.split() for l in keys_file.read_text().splitlines()
-                   if l.strip() and not l.startswith("#")] if keys_file.exists() else []
+        entries = [ln.split() for ln in keys_file.read_text().splitlines()
+                   if ln.strip() and not ln.startswith("#")] if keys_file.exists() else []
         if entries:
             print(f"  Keys already authorized for {user}:")
             for e in entries:
@@ -1162,8 +1172,10 @@ def step_laptop(data: dict) -> None:
                 if pub.split()[1] in existing:
                     ok("key already authorized")
                 else:
-                    keys.write_text(existing + ("" if existing.endswith("\n") or not existing else "\n")
-                                    + pub.strip() + "\n")
+                    keys.write_text(
+                        existing
+                        + ("" if existing.endswith("\n") or not existing else "\n")
+                        + pub.strip() + "\n")
                     keys.chmod(0o600)
                     if os.geteuid() == 0:
                         os.chown(ssh_dir, pw.pw_uid, pw.pw_gid)
@@ -1222,10 +1234,10 @@ def step_cron(data: dict) -> None:
     line = (f"{data['pipeline']['cron_utc']} {env}{REPO}/server/run_nightly.sh "
             f">> {data['logs_dir']}/nightly.log 2>&1 {tag}")
     cur = subprocess.run(crontab_cmd(data, "-l"), capture_output=True, text=True)
-    lines = [l for l in (cur.stdout.splitlines() if cur.returncode == 0 else []) if tag not in l]
+    lines = [ln for ln in (cur.stdout.splitlines() if cur.returncode == 0 else []) if tag not in ln]
     lines.append(line)
     subprocess.run(crontab_cmd(data, "-"), input="\n".join(lines) + "\n", text=True, check=True)
-    os.chmod(REPO / "server" / "run_nightly.sh", 0o755)
+    os.chmod(REPO / "server" / "run_nightly.sh", 0o755)  # noqa: S103 -- rwxr-xr-x, chmod +x; no world-write bit
     ok(f"crontab installed for {data['run_as_user']}: {line}")
 
 
@@ -1246,7 +1258,8 @@ def step_systemd(data: dict) -> None:
         subprocess.run([*sysctl, "enable", "--now", unit_name()], check=True)
         ok(f"{unit_name()} service enabled + started")
     except Exception as e:
-        bad(f"systemd install failed ({e}); unit content written to {REPO / 'dailypost-bot.service.generated'}")
+        bad(f"systemd install failed ({e}); unit content written to "
+            f"{REPO / 'dailypost-bot.service.generated'}")
         (REPO / "dailypost-bot.service.generated").write_text(unit)
 
 
@@ -1282,8 +1295,9 @@ def doctor() -> int:
     cfg = Config.load(CONFIG)
     laptop = cfg.get("mode") == "laptop"
 
-    check("store", lambda: (__import__('server.store', fromlist=['Store']).Store(cfg.path_of('store_dir')) and
-                            f"writable at {cfg.path_of('store_dir')}"))
+    check("store", lambda: (
+        __import__('server.store', fromlist=['Store']).Store(cfg.path_of('store_dir'))
+        and f"writable at {cfg.path_of('store_dir')}"))
     backend = str(cfg.get("pipeline.backend", "claude") or "claude")
     if backend == "codex":
         check("codex CLI", lambda: subprocess.run(
@@ -1326,7 +1340,7 @@ def doctor() -> int:
                 continue
             try:
                 d = yaml.safe_load(other.read_text(encoding="utf-8")) or {}
-            except Exception:
+            except Exception:  # noqa: S112 -- a sibling instance's config is unreadable/malformed; skip it
                 continue
             if d.get("store_dir") and Path(os.path.expanduser(d["store_dir"])).resolve() == mine:
                 others.append(str(other))
@@ -1350,8 +1364,10 @@ def doctor() -> int:
         t = src["type"]
         name = src.get("name", t)
         if t in ("claude_projects_dir",):
-            check(name, lambda s=src: f"dir exists" if Path(os.path.expanduser(s['projects_dir'])).exists()
-                  else (_ for _ in ()).throw(RuntimeError("projects dir missing")))
+            check(name, lambda s=src: (
+                "dir exists"
+                if Path(os.path.expanduser(s['projects_dir'])).exists()
+                else (_ for _ in ()).throw(RuntimeError("projects dir missing"))))
         elif t == "claude_sessions":
             def _cs(s=src):
                 from server.harvest.claude_sessions import resolve_session_ids
@@ -1380,8 +1396,11 @@ def doctor() -> int:
             check(name, lambda s=src: "ok" if Path(s["path"]).exists()
                   else (_ for _ in ()).throw(RuntimeError("ingest dir missing")))
         elif t == "telegram":
-            check(name, lambda s=src: "session file present" if Path(os.path.expanduser(s["session_file"])).exists()
-                  else (_ for _ in ()).throw(RuntimeError("session file missing — run wizard --source telegram")))
+            check(name, lambda s=src: (
+                "session file present"
+                if Path(os.path.expanduser(s["session_file"])).exists()
+                else (_ for _ in ()).throw(
+                    RuntimeError("session file missing — run wizard --source telegram"))))
         elif t == "gmail":
             def _gm(s=src):
                 from server.harvest.gmail import _client
@@ -1396,7 +1415,8 @@ def doctor() -> int:
             def _wa(s=src):
                 import requests
                 r = requests.get(f"{s['waha_url']}/api/sessions/{s.get('session', 'default')}",
-                                 headers={"X-Api-Key": cfg.secret("WAHA_API_KEY") or ""}, timeout=10)
+                                 headers={"X-Api-Key": cfg.secret("WAHA_API_KEY") or ""},
+                                 timeout=10)
                 r.raise_for_status()
                 d = r.json()
                 if d.get("status") != "WORKING":
@@ -1447,9 +1467,9 @@ def doctor() -> int:
             raise RuntimeError(msg)
         try:
             import faster_whisper  # noqa: F401
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError("faster-whisper not installed — run: "
-                               f"{venv_pip()} install -r requirements-audio.txt")
+                               f"{venv_pip()} install -r requirements-audio.txt") from e
         from server.store import Store
         db = Store(cfg.path_of("store_dir")).db
         pending = db.execute(
@@ -1505,7 +1525,8 @@ def doctor() -> int:
         from server.bot.x_client import XClient, _fail
         client = XClient(cfg)
         if not client.configured():
-            raise RuntimeError("X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET not set")
+            raise RuntimeError(
+                "X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_TOKEN_SECRET not set")
         import requests
         r = requests.get("https://api.twitter.com/2/users/me", auth=client._auth(), timeout=30)
         if r.status_code >= 300:
@@ -1533,8 +1554,8 @@ def doctor() -> int:
             """The old version of this check printed the schedule and stopped —
             which passed just as cheerfully on a laptop where the bot had been
             closed for a month and nothing had drafted since."""
-            from setup import autostart
             from server.bot.scheduler import _parse_schedule, heartbeat
+            from setup import autostart
             hour, minute = _parse_schedule(cfg)
             when = f"drafts at {hour:02d}:{minute:02d} local"
             _, auto = autostart.state()
@@ -1577,8 +1598,9 @@ def doctor() -> int:
             posted. The deadline must also land inside the window, or a laptop that
             never checks in is never drafted for at all."""
             import re as _re
+            from datetime import datetime
+            from datetime import timezone as _tz
             from zoneinfo import ZoneInfo
-            from datetime import datetime, timezone as _tz
             sched = str(cfg.get("pipeline.cron_utc", ""))
             m = _re.match(r"^(\d+)\s+([0-9,\-*/]+)", sched)
             if not m:
@@ -1586,7 +1608,8 @@ def doctor() -> int:
             minute, hours = int(m.group(1)), m.group(2)
             last_utc = int(hours.split("-")[-1].split(",")[-1]) if hours != "*" else 23
             tzname = str(cfg.get("pipeline.timezone", "UTC"))
-            off = datetime.now(_tz.utc).astimezone(ZoneInfo(tzname)).utcoffset().total_seconds() / 3600
+            off = (datetime.now(_tz.utc).astimezone(ZoneInfo(tzname))
+                   .utcoffset().total_seconds() / 3600)
             last_local = (last_utc + off) % 24
             deadline = int(cfg.get("pipeline.wait_deadline_hour", 12))
             if last_local >= 12:
@@ -1611,7 +1634,8 @@ def doctor() -> int:
         check("cron", _cron)
 
         def _svc():
-            out = subprocess.run(["systemctl", "is-active", unit_name()], capture_output=True, text=True)
+            out = subprocess.run(["systemctl", "is-active", unit_name()],
+                                 capture_output=True, text=True)
             if out.stdout.strip() != "active":
                 raise RuntimeError(out.stdout.strip() or "not installed")
             return "active"
@@ -1698,7 +1722,7 @@ def _done_pair(data):
                          headers={"X-Api-Key": env_get("WAHA_API_KEY") or ""}, timeout=5)
         if r.ok and r.json().get("status") == "WORKING":
             return "session WORKING"
-    except Exception:
+    except Exception:  # noqa: S110 -- probe: WAHA not reachable yet is the normal pre-setup state
         pass
 
 
@@ -1732,7 +1756,8 @@ def _done_cron(data):
 
 
 def _done_systemd(data):
-    out = subprocess.run(["systemctl", "is-active", "dailypost-bot"], capture_output=True, text=True)
+    out = subprocess.run(["systemctl", "is-active", "dailypost-bot"],
+                         capture_output=True, text=True)
     if out.stdout.strip() == "active":
         return "service active"
 
@@ -1775,7 +1800,7 @@ def main(argv=None) -> int:
                 continue
             try:
                 d = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
-            except Exception:
+            except Exception:  # noqa: S112 -- a sibling instance's config is unreadable/malformed; skip it
                 continue
             name = cfg_file.parent.name if cfg_file.parent.name != REPO.name else "default"
             print(f"{name}\t{d.get('ingest_dir', '')}/laptop\t{d.get('run_as_user', '')}")
@@ -1797,7 +1822,7 @@ def main(argv=None) -> int:
             mode_default = existing.get("mode") or (
                 "server" if existing.get("run_as_user") or existing.get("install_root")
                 else "laptop")
-        except Exception:
+        except Exception:  # noqa: S110 -- no existing config to infer a default from; keep asking
             pass
         raw_mode = ask("mode — laptop (just you, no server, this machine only) "
                       "or server (shared box, cron + systemd)", mode_default)
@@ -1805,8 +1830,9 @@ def main(argv=None) -> int:
         if mode == "server":
             # several people can share one server install — each gets their own
             # config, store, bot, cron and WAHA container under instances/<name>/
-            existing = sorted(p.name for p in (REPO / "instances").glob("*")
-                              if (p / "config.yaml").exists()) if (REPO / "instances").exists() else []
+            existing = (sorted(p.name for p in (REPO / "instances").glob("*")
+                               if (p / "config.yaml").exists())
+                        if (REPO / "instances").exists() else [])
             if existing:
                 print(f"existing instances: {', '.join(existing)}")
             instance = ask("who is this setup for? (short name, e.g. alice; "
@@ -1844,7 +1870,7 @@ def main(argv=None) -> int:
         done = None
         try:
             done = DONE_PROBES[name](data)
-        except Exception:
+        except Exception:  # noqa: S110 -- probe: step not set up yet is the normal pre-setup state
             pass
         if done:
             if not yes(f"[{name}] already set up ({done}) — redo?", False):
@@ -1880,13 +1906,13 @@ def main(argv=None) -> int:
     elif INSTANCE:
         print(f"  manual run:      DAILYPOST_CONFIG={CONFIG} server/run_nightly.sh --dry-run")
         print(f"  bot service:     systemctl status {unit_name()}")
-        print(f"\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
-        print(f"or re-print it any time with:")
+        print("\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
+        print("or re-print it any time with:")
         print(f"  python -m setup.wizard{inst} --source laptop")
     else:
         print("  manual run:      server/run_nightly.sh --dry-run")
-        print(f"\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
-        print(f"or re-print it any time with:")
+        print("\nNow finish on the laptop — see the 'run this ON THE LAPTOP' block above,")
+        print("or re-print it any time with:")
         print(f"  python -m setup.wizard{inst} --source laptop")
     print("=" * 60)
     return 0

@@ -4,7 +4,7 @@ config alone.
 """
 import time
 
-from server.bot.scheduler import (DEFAULT_POLL_SECONDS, heartbeat, heartbeat_path)
+from server.bot.scheduler import DEFAULT_POLL_SECONDS, heartbeat, heartbeat_path
 from server.config import Config
 
 

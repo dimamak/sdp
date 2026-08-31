@@ -26,7 +26,8 @@ def answers(monkeypatch):
     monkeypatch.setattr(wizard, "ask",
                         lambda prompt, default="": state["ask"].pop(0) if state["ask"] else default)
     monkeypatch.setattr(wizard, "yes",
-                        lambda prompt, default=True: state["yes"].pop(0) if state["yes"] else default)
+                        lambda prompt, default=True: (
+                            state["yes"].pop(0) if state["yes"] else default))
     monkeypatch.setattr(wizard, "have_module", lambda name: True)
     monkeypatch.setattr(wizard, "install_extra",
                         lambda req: pytest.fail("faster-whisper is already installed"))

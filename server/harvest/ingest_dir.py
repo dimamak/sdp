@@ -24,8 +24,8 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 
-from . import register
 from ..util import day_of, get_logger
+from . import register
 
 log = get_logger("harvest.ingest")
 

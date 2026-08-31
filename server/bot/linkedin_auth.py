@@ -26,7 +26,7 @@ import requests
 from ..config import Config
 
 AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
-TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
+TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"  # noqa: S105 -- endpoint URL, not a credential
 SCOPES = "openid profile w_member_social"
 
 
@@ -65,11 +65,11 @@ def main(argv=None) -> int:
     if args.print_url:
         print(url)
         print()
-        print(f"Open it signed in as the person this instance posts for "
-              f"(use a private window if another account is active).")
+        print("Open it signed in as the person this instance posts for "
+              "(use a private window if another account is active).")
         print("Approve, then copy the whole localhost URL from the address bar "
               "— it will not load, that is expected — and run:")
-        print(f'  python -m server.bot.linkedin_auth --exchange "<that URL>"')
+        print('  python -m server.bot.linkedin_auth --exchange "<that URL>"')
         print(f"Token will be written to: {token_file}")
         return 0
 
@@ -95,7 +95,8 @@ def main(argv=None) -> int:
                     code_holder["code"] = q["code"][0]
                     self.send_response(200)
                     self.end_headers()
-                    self.wfile.write(b"Social Daily Poster: LinkedIn authorized. You can close this tab.")
+                    self.wfile.write(
+                        b"Social Daily Poster: LinkedIn authorized. You can close this tab.")
                 else:
                     self.send_response(400)
                     self.end_headers()
@@ -145,7 +146,7 @@ def main(argv=None) -> int:
             continue
         try:
             them = json.loads(other.read_text()).get("person_urn")
-        except Exception:
+        except Exception:  # noqa: S112 -- another instance's token file is unreadable/malformed; skip it
             continue
         if them == f"urn:li:person:{sub}":
             print(f"WARNING: this is the SAME account as {other} — you were signed "

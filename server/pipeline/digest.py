@@ -17,8 +17,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .llm import run_llm
 from ..util import get_logger, window_start_iso
+from .llm import run_llm
 
 log = get_logger("pipeline.digest")
 
@@ -139,11 +139,14 @@ def _compress_jsonl(path: Path, since: datetime | None = None) -> str:
                     for block in content:
                         if not isinstance(block, dict):
                             continue
-                        if role == "assistant" and block.get("type") == "text" and block.get("text", "").strip():
+                        if (role == "assistant" and block.get("type") == "text"
+                                and block.get("text", "").strip()):
                             lines_out.append(f"ASSISTANT: {block['text'].strip()[:400]}")
-                        elif role == "user" and block.get("type") == "text" and str(block.get("text", "")).strip():
+                        elif (role == "user" and block.get("type") == "text"
+                                and str(block.get("text", "")).strip()):
                             t = str(block["text"]).strip()
-                            if not t.startswith(("<command-name>", "<local-command", "Caveat:", "<system-reminder>")):
+                            if not t.startswith(("<command-name>", "<local-command", "Caveat:",
+                                                "<system-reminder>")):
                                 lines_out.append(f"USER: {t[:600]}")
     except OSError as e:
         log.warning("cannot read %s: %s", path, e)
@@ -182,7 +185,8 @@ def _codex_message_text(rec: dict) -> tuple[str | None, str | None]:
     if not isinstance(content, list):
         return None, None
     parts = [str(b["text"]) for b in content
-            if isinstance(b, dict) and b.get("type") in ("input_text", "output_text", "text") and b.get("text")]
+            if isinstance(b, dict) and b.get("type") in ("input_text", "output_text", "text")
+            and b.get("text")]
     text = "\n".join(parts).strip()
     return (role, text) if text else (None, None)
 
@@ -237,7 +241,8 @@ def _summarize_session(cfg, narrative: str, cap: int) -> str:
     model = cfg.get("pipeline.summary_model", default_model)
     prompt = SESSION_SUMMARY_PROMPT.format(narrative=narrative, cap=cap)
     try:
-        summary = run_llm(cfg, prompt, model=str(model) if model else None, timeout=300).text.strip()
+        summary = run_llm(
+            cfg, prompt, model=str(model) if model else None, timeout=300).text.strip()
     except Exception as e:
         log.warning("session summary failed (%s) — falling back to raw excerpt", e)
         return narrative[:cap]
@@ -246,7 +251,9 @@ def _summarize_session(cfg, narrative: str, cap: int) -> str:
 
 def describe_screenshots(cfg, store, items) -> None:
     """One claude -p call describing all new screenshots; summaries saved on items."""
-    todo = [i for i in items if i["kind"] == "screenshot" and not i["summary"] and i["path"] and Path(i["path"]).exists()]
+    todo = [i for i in items
+            if i["kind"] == "screenshot" and not i["summary"] and i["path"]
+            and Path(i["path"]).exists()]
     if not todo:
         return
     paths = [i["path"] for i in todo]
@@ -378,7 +385,9 @@ def build_digest(cfg, store, day: str) -> tuple[str, list[int]]:
             by_age.pop(0)
             dropped += 1
         digest = _render_digest(day, by_age)
-        digest += f"\n\n[digest truncated at size cap: dropped {dropped} oldest item(s) of {len(entries)}]"
+        digest += (
+            f"\n\n[digest truncated at size cap: dropped {dropped} oldest item(s) "
+            f"of {len(entries)}]")
         log.warning("digest for %s hit the %d-char cap — dropped %d/%d item(s)",
                     day, total_cap, dropped, len(entries))
     return digest, ids

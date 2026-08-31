@@ -18,7 +18,8 @@ def _cfg(tmp_path):
 
 def _hour_log(store, day: str, hour: int, samples: list[tuple[int, str, str]]):
     """One hourly NDJSON, as the recorder writes it: (minute, app, title) rows."""
-    path = store.day_files_dir(day, "activity") / f"activity-{day.replace('-', '')}-{hour:02d}.ndjson"
+    path = (store.day_files_dir(day, "activity")
+            / f"activity-{day.replace('-', '')}-{hour:02d}.ndjson")
     now = datetime.now(timezone.utc)
     with path.open("w", encoding="utf-8") as fh:
         for minute, app, title in samples:
@@ -50,7 +51,7 @@ def test_rows_are_sorted_before_collapsing():
             ("2026-08-29T09:00:00+00:00", "Chrome", "docs"),
             ("2026-08-29T10:00:00+00:00", "Chrome", "docs")]
     out = _activity_timeline(rows, 10000).splitlines()
-    assert [l[:5] for l in out] == ["09:00", "10:00", "11:00"]
+    assert [ln[:5] for ln in out] == ["09:00", "10:00", "11:00"]
     assert out[1] == "10:00 docs"               # collapsed against 09:00, not 11:00
 
 

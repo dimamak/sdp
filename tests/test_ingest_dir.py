@@ -7,7 +7,6 @@ resuming a mic the person had deliberately paused. Anything a rule skips must
 still be on disk when the run ends.
 """
 import os
-import time
 from datetime import datetime, timedelta, timezone
 
 from server.config import Config

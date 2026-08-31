@@ -9,8 +9,8 @@ import base64
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import register
 from ..util import day_of, get_logger
+from . import register
 
 log = get_logger("harvest.gmail")
 
@@ -77,8 +77,11 @@ def collect(src, cfg, store, since) -> int:
             is_transcript = any(t in sender.lower() for t in transcript_senders)
             summary = f"From: {sender}\nSubject: {subject}\n{msg.get('snippet', '')}"
             if is_transcript:
-                full = svc.users().messages().get(userId="me", id=ref["id"], format="full").execute()
-                summary = f"MEETING TRANSCRIPT EMAIL\nFrom: {sender}\nSubject: {subject}\n" + _body_text(full.get("payload", {}))
+                full = svc.users().messages().get(
+                    userId="me", id=ref["id"], format="full"
+                ).execute()
+                summary = (f"MEETING TRANSCRIPT EMAIL\nFrom: {sender}\nSubject: {subject}\n"
+                           + _body_text(full.get("payload", {})))
             if store.add_item(
                 source="gmail",
                 external_id=ref["id"],
