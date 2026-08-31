@@ -27,3 +27,7 @@ ignore = ["S603", "S607"]
 # are test fixtures/assertions against this project's own pure functions, not
 # real binds, real temp-file I/O, or untrusted XML.
 "tests/**" = ["S101", "S104", "S108", "S314"]
+
+[tool.coverage.run]
+source = ["server", "setup"]
+omit = ["tests/*"]
