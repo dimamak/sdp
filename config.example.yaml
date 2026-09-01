@@ -50,7 +50,11 @@ pipeline:
   wait_deadline_hour: 12              # server mode only: local hour after which we
                                       # draft regardless, so a laptop left off all
                                       # week still posts
-  max_drafts: 4                       # how many stories to draft per day (one message each)
+  max_drafts: 2                       # how many stories to draft per day (one message each).
+                                      # Drafting stays daily even with a narrow publish.days
+                                      # window below — only publishing is gated, so material
+                                      # isn't thrown away on off days. Kept low regardless:
+                                      # more messages than publish.days allows out is just noise.
   recent_hooks: 10                    # past opening lines shown to the drafter so it doesn't
                                       # reuse the same hook move night after night (one per
                                       # day, preferring that day's posted draft)
@@ -221,6 +225,20 @@ linkedin:
                                        # of going silent. Drop once /rest/ has worked.
   # dry_run: true                      # log the request body, publish nothing
 
+# When you tap Approve / Post with image / Post text-only, the post normally goes
+# out immediately. Set a window below to hold it for a scheduled slot instead —
+# an empty/unset window keeps the immediate behaviour (the default for anyone
+# else running this).
+publish:
+  # window: "15:00-18:00"              # UTC unless window_tz says otherwise. Empty = publish
+                                       # the moment you approve (previous, and default, behaviour)
+  window_tz: Etc/UTC                   # deliberately NOT pipeline.timezone — the window targets
+                                       # an audience, not your day boundaries
+  days: [Tue, Wed, Thu]                # weekdays eligible for publishing
+  max_per_slot: 1                      # a second approved draft rolls to the next slot
+  max_age_days: 3                      # a queued draft older than this expires unposted
+  poll_seconds: 60                     # how often the queue worker checks for due drafts
+
 # ---------------------------------------------------------------------------
 # Also post to X (Twitter), once the LinkedIn post has actually gone out.
 # Once a LinkedIn post publishes, Claude (same day session) writes a SEPARATE,
@@ -302,13 +320,20 @@ image:
                                        # untouched). The SynthID watermark is in the
                                        # pixels and stays either way — this removes the
                                        # visible disclosure, not the detectability.
+  text_check: true                     # after a render, check for malformed/nonsense text
+                                       # or a legible dashboard/slide — not for text itself,
+                                       # which is fine (see ROADMAP Phase 9)
+  text_check_model: ""                 # empty = pipeline.backend's default model; set to a
+                                       # cheaper/faster model id if your backend supports one
+  text_check_retries: 1                # auto re-renders on a flagged take before delivering
+                                       # it anyway with a warning caption
   # Appended to every prompt — your house look. Keep it short and visual.
   # The full-frame clause is load-bearing: asked for a cinematic look, the model
   # paints black letterbox bars into the canvas and they show as dead bands.
   style_suffix: >
     Grounded, literal illustration of the real scene — not an abstract metaphor
-    or symbolic composition. Naturalistic color and detail. No text, no
-    recognisable real people; a named company's real logo is fine.
+    or symbolic composition. Naturalistic color and detail. No recognisable
+    real people; a named company's real logo is fine.
     Fills the entire frame edge to edge — no letterboxing, no black bars, no borders.
 
 # Laptop side (read by wizard_laptop.ps1 to generate laptop/push.conf; the bash

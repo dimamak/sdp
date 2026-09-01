@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -35,7 +36,9 @@ from telegram.ext import (
 
 from ..config import Config
 from ..pipeline.draft import converse, image_brief, reddit_body, reddit_title, x_rewrite
+from ..pipeline.image_check import check_image_text
 from ..pipeline.image_gen import ImageGenError, generate_image
+from ..pipeline.publish_window import in_window, next_slot, parse_window, slot_taken
 from ..store import Store
 from ..util import get_logger
 from .linkedin_client import LinkedInClient, feed_url
@@ -79,6 +82,12 @@ def image_failed_keyboard(draft_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔄 Retry image", callback_data=f"regen:{draft_id}"),
          InlineKeyboardButton("📄 Post text-only", callback_data=f"posttxt:{draft_id}")],
         [InlineKeyboardButton("⏭ Cancel", callback_data=f"cancelimg:{draft_id}")],
+    ])
+
+
+def queued_keyboard(draft_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Post now anyway", callback_data=f"postnow:{draft_id}")],
     ])
 
 
@@ -305,6 +314,29 @@ class Bot:
                     reply_markup=image_failed_keyboard(draft_id))
                 return
 
+            warning = ""
+            if bool(self.cfg.get("image.text_check", True)):
+                problem, note = await asyncio.to_thread(check_image_text, self.cfg, img.path)
+                retries = int(self.cfg.get("image.text_check_retries", 1))
+                attempt = 0
+                # a take that gets re-rendered here was never shown to you, so it
+                # doesn't burn a slot of max_regenerations the way a real Regenerate
+                # tap does
+                while problem and attempt < retries:
+                    attempt += 1
+                    await status.edit_text("🎨 that take had garbled text in it — one more…")
+                    try:
+                        img = await asyncio.to_thread(
+                            generate_image, self.cfg, prompt, out_path=out_path)
+                    except ImageGenError as e:
+                        log.warning("re-render after text-check failure also failed (%s): %s",
+                                   e.reason, e)
+                        break
+                    problem, note = await asyncio.to_thread(check_image_text, self.cfg, img.path)
+                if problem:
+                    warning = f"\n\n⚠️ garbled text in the image: {note}" if note else \
+                              "\n\n⚠️ garbled text in the image"
+
             img_id = self.store.add_image(draft_id, n, prompt=prompt, alt_text=alt,
                                           feedback=feedback, path=str(img.path),
                                           mime=img.mime, model=img.model, status="ready")
@@ -326,7 +358,7 @@ class Bot:
             # goes in its own message because it routinely exceeds the 1024 caption cap
             with open(img.path, "rb") as fh:
                 photo = await context.bot.send_photo(self.chat_id, photo=fh,
-                                                     caption=(alt or "")[:1024])
+                                                     caption=((alt or "") + warning)[:1024])
             sent = await context.bot.send_message(
                 self.chat_id,
                 (f"{post_text}\n\n— take {n}. Reply to steer the image "
@@ -373,6 +405,88 @@ class Bot:
                 await self.start_x(context, fresh)
         else:
             await self.maybe_start_reddit(context, draft_id)
+
+    # ---- publish queue ---------------------------------------------------------
+
+    def _next_free_slot(self, after: datetime) -> datetime:
+        """The next eligible slot at or after `after` whose day isn't already at
+        publish.max_per_slot. Rolls day by day — see plan.md §1, "a second
+        approved draft rolls past a taken slot to the next one".
+        """
+        candidate = after
+        for _ in range(8):
+            slot = next_slot(self.cfg, candidate)
+            if not slot_taken(self.store, slot, self.cfg):
+                return slot
+            candidate = slot + timedelta(days=1)
+        raise ValueError(f"publish.days={self.cfg.get('publish.days')!r} leaves no free slot")
+
+    async def publish_or_queue(self, context: ContextTypes.DEFAULT_TYPE, draft, img=None) -> None:
+        """Approve's actual destination: publish immediately if no window is
+        configured (today's behaviour) or the current slot is free, otherwise
+        queue for the next eligible slot. The only entry point other than
+        `postnow` that decides whether `publish()` runs now or later.
+        """
+        win = parse_window(self.cfg)
+        now = datetime.now(timezone.utc)
+        if win is None or (in_window(self.cfg, now) and not slot_taken(self.store, now, self.cfg)):
+            await self.publish(context, draft, img)
+            return
+
+        slot = self._next_free_slot(now)
+        self.store.queue_draft(draft["id"], slot.isoformat(), img["id"] if img else None)
+        if img is not None:
+            self.store.update_image(img["id"], status="scheduled")
+        when = slot.astimezone(win.tz).strftime("%a %H:%M %Z")
+        await context.bot.send_message(
+            self.chat_id, f"⏳ Queued for {when}. It'll go out on its own.",
+            reply_markup=queued_keyboard(draft["id"]))
+
+    async def _process_due_queue(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """One tick of the publish-queue worker — see run_publish_queue()."""
+        if self.busy.locked():
+            return  # try again next tick
+        now = datetime.now(timezone.utc)
+        max_age_days = int(self.cfg.get("publish.max_age_days", 3))
+        cap = int(self.cfg.get("publish.max_per_slot", 1) or 0)
+        published = 0
+        for draft in self.store.due_drafts(now.isoformat()):
+            scheduled = datetime.fromisoformat(draft["scheduled_at"])
+            age_days = (now - scheduled).days
+            if age_days > max_age_days:
+                self.store.expire_draft(draft["id"])
+                await context.bot.send_message(
+                    self.chat_id,
+                    f"⌛ Dropped the queued draft for {draft['day']} — it's {age_days} days "
+                    "old and the fact has gone stale.")
+                continue
+            if cap > 0 and published >= cap:
+                # today's cap is already reached (by the publishes just above),
+                # so _next_free_slot rolls this one to the next eligible day
+                next_dt = self._next_free_slot(now)
+                self.store.queue_draft(draft["id"], next_dt.isoformat(),
+                                       draft["scheduled_image_id"])
+                continue
+            img = (self.store.image_by_id(int(draft["scheduled_image_id"]))
+                  if draft["scheduled_image_id"] else None)
+            await self.publish(context, draft, img)
+            published += 1
+
+    async def run_publish_queue(self, bot_api) -> None:
+        """Long-running task, started from post_init in main(): the bot process
+        is already alive for Telegram polling, so this rides the same event
+        loop instead of adding a scheduler dependency (see plan.md §1).
+        `bot_api` is a plain telegram.Bot, wrapped so the rest of this class's
+        methods can keep using `context.bot` unchanged.
+        """
+        context = SimpleNamespace(bot=bot_api)
+        poll = max(1, int(self.cfg.get("publish.poll_seconds", 60)))
+        while True:
+            try:
+                await self._process_due_queue(context)
+            except Exception:
+                log.exception("publish queue tick failed")
+            await asyncio.sleep(poll)
 
     # ---- X (Twitter) ---------------------------------------------------------
 
@@ -607,7 +721,7 @@ class Bot:
             if self.cfg.get("image.enabled", True):
                 await self.start_image(context, draft)
             else:
-                await self.publish(context, draft)
+                await self.publish_or_queue(context, draft)
 
         elif action == "postimg":
             img = self.store.latest_image(draft_id, status="pending_review")
@@ -618,7 +732,7 @@ class Bot:
                 await q.edit_message_reply_markup(None)
                 return
             await q.edit_message_reply_markup(None)
-            await self.publish(context, draft, img)
+            await self.publish_or_queue(context, draft, img)
 
         elif action == "posttxt":
             if draft["status"] == "posted":
@@ -628,7 +742,16 @@ class Bot:
             img = self.store.latest_image(draft_id, status="pending_review")
             if img is not None:
                 self.store.update_image(img["id"], status="discarded")
-            await self.publish(context, draft)
+            await self.publish_or_queue(context, draft)
+
+        elif action == "postnow":
+            if draft["status"] != "queued":
+                await q.edit_message_reply_markup(None)
+                return
+            await q.edit_message_reply_markup(None)
+            img = (self.store.image_by_id(int(draft["scheduled_image_id"]))
+                  if draft["scheduled_image_id"] else None)
+            await self.publish(context, draft, img)
 
         elif action == "regen":
             await q.edit_message_reply_markup(None)
@@ -855,6 +978,14 @@ class Bot:
         # trust, so capture reports here even when it's off.
         from ..capture import capture_status_lines
         lines += capture_status_lines(self.cfg)
+        queued = self.store.queued_drafts()
+        if queued:
+            win = parse_window(self.cfg)
+            tz = win.tz if win else timezone.utc
+            lines.append("Queued:")
+            for d in queued:
+                when = datetime.fromisoformat(d["scheduled_at"]).astimezone(tz)
+                lines.append(f"  #{d['id']} {d['day']} → {when.strftime('%a %H:%M %Z')}")
         await update.message.reply_text("\n".join(lines))
 
     async def on_x(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -908,6 +1039,9 @@ class Bot:
             "nothing reaches LinkedIn until you tap Post with image (or Post text-only). "
             "While an image is on the table, plain messages steer the picture — "
             "use /talk to go back to discussing the words.\n\n"
+            "If a publish window is configured, posting with image/text-only doesn't send "
+            "it right away either — it queues for the next eligible slot and tells you when. "
+            "Post now anyway sends it immediately instead. /status lists what's queued.\n\n"
             "If X posting is enabled, once a post reaches LinkedIn I write a separate, "
             "shorter X-native rewrite and send it with its own buttons — nothing reaches "
             "X until you tap Post to X, and skipping or failing that never touches the "
@@ -957,6 +1091,14 @@ def start_waha_webhook(cfg: Config):
     log.info("WAHA webhook listening on %s:%d", host, port)
 
 
+async def _post_init(application: Application) -> None:
+    """Starts the publish-queue worker on the same event loop PTB polls on —
+    see Bot.run_publish_queue for why this is a plain asyncio task rather than
+    PTB's JobQueue (that needs an extra we don't depend on)."""
+    bot: Bot = application.bot_data["bot"]
+    asyncio.create_task(bot.run_publish_queue(application.bot))
+
+
 def main() -> None:
     cfg = Config.load()
     token = cfg.secret("TG_BOT_TOKEN")
@@ -980,7 +1122,8 @@ def main() -> None:
             start_activity(cfg)
 
     bot = Bot(cfg)
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_post_init).build()
+    app.bot_data["bot"] = bot
     app.add_handler(CallbackQueryHandler(bot.on_callback))
     app.add_handler(CommandHandler("status", bot.on_status))
     app.add_handler(CommandHandler("help", bot.on_help))

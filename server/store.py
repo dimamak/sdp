@@ -30,10 +30,13 @@ CREATE TABLE IF NOT EXISTS drafts (
     text TEXT NOT NULL,
     rationale TEXT,
     alternates_json TEXT,
-    -- pending|editing|imaging|skipped|posted|failed
+    -- pending|editing|imaging|queued|expired|skipped|posted|failed
     -- ('approved'/'edited' are legacy values nothing writes any more)
     -- imaging: you tapped Approve, an image is rendering or waiting for your
     --          confirmation — nothing has been sent to LinkedIn yet
+    -- queued: approved and (if imaged) confirmed, waiting for its publish
+    --         window (see publish.* config + server/pipeline/publish_window.py)
+    -- expired: was queued past publish.max_age_days and was dropped unposted
     status TEXT NOT NULL DEFAULT 'pending',
     tg_message_id TEXT,
     posted_urn TEXT,
@@ -133,6 +136,9 @@ class Store:
             "reddit_title": "TEXT",
             "reddit_permalink": "TEXT",       # optional, if you paste the URL back
             "reddit_tg_message_id": "TEXT",
+            "scheduled_at": "TEXT",           # UTC ISO; NULL unless status='queued'
+            "scheduled_image_id": "TEXT",     # draft_images.id chosen for the queued post
+            "shape": "TEXT",                  # finding|list|ask — what kind of post this is
         })
         _ensure_columns(self.db, "draft_x", {})
         _ensure_columns(self.db, "day_sessions", {"backend": "TEXT DEFAULT 'claude'"})
@@ -200,11 +206,11 @@ class Store:
 
     # ---- drafts --------------------------------------------------------------
     def add_draft(self, day: str, text: str, rationale: str | None = None,
-                  alternates: list | None = None) -> int:
+                  alternates: list | None = None, shape: str | None = None) -> int:
         cur = self.db.execute(
-            "INSERT INTO drafts(day, text, rationale, alternates_json) VALUES(?,?,?,?)",
+            "INSERT INTO drafts(day, text, rationale, alternates_json, shape) VALUES(?,?,?,?,?)",
             (day, text, rationale,
-             json.dumps(alternates, ensure_ascii=False) if alternates else None),
+             json.dumps(alternates, ensure_ascii=False) if alternates else None, shape),
         )
         self.db.commit()
         return cur.lastrowid
@@ -247,6 +253,54 @@ class Store:
                 break
         return hooks
 
+    def recent_shapes(self, before_day: str, limit: int = 10) -> list[dict]:
+        """One row per day, most recent first: shape, length, opening line, and
+        whether it ended on a question — the drafter's only view of its own
+        recent sameness. Same one-per-day rule as recent_hooks() so a prolific
+        night can't fill the table with its own siblings.
+        """
+        rows = self.db.execute(
+            "SELECT day, text, shape FROM drafts WHERE day < ? AND text <> ''"
+            " ORDER BY day DESC, (status='posted') DESC, id ASC",
+            (before_day,),
+        ).fetchall()
+        out, seen = [], set()
+        for r in rows:
+            if r["day"] in seen:
+                continue
+            text = r["text"].strip()
+            lines = text.splitlines()
+            if not lines:
+                continue
+            seen.add(r["day"])
+            out.append({
+                "day": r["day"],
+                "shape": r["shape"] or "finding",
+                "chars": len(text),
+                "first_line": lines[0].strip(),
+                "ended_with_question": text.rstrip().endswith("?"),
+            })
+            if len(out) >= limit:
+                break
+        return out
+
+    def days_since_shape(self, shape: str, before_day: str | None = None) -> int | None:
+        """Calendar days since the most recent draft of this shape, or None if
+        there has never been one. `before_day` excludes the day being drafted
+        right now, same cutoff recent_hooks()/recent_shapes() use."""
+        sql = "SELECT day FROM drafts WHERE shape=?"
+        args: tuple = (shape,)
+        if before_day:
+            sql += " AND day < ?"
+            args += (before_day,)
+        row = self.db.execute(sql + " ORDER BY day DESC LIMIT 1", args).fetchone()
+        if row is None:
+            return None
+        last = datetime.strptime(row["day"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        ref = (datetime.strptime(before_day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+              if before_day else datetime.now(timezone.utc))
+        return (ref - last).days
+
     def latest_editing_draft(self) -> sqlite3.Row | None:
         return self.db.execute(
             "SELECT * FROM drafts WHERE status='editing' ORDER BY id DESC LIMIT 1"
@@ -283,6 +337,52 @@ class Store:
         return self.db.execute(
             "SELECT * FROM drafts WHERE day=? ORDER BY id DESC LIMIT 1", (day,)
         ).fetchone()
+
+    # ---- publish queue ---------------------------------------------------------
+    def queue_draft(self, draft_id: int, scheduled_at: str,
+                    image_id: int | str | None = None) -> None:
+        """Approved (and, if imaged, confirmed) — waiting for its publish window."""
+        self.update_draft(draft_id, status="queued", scheduled_at=scheduled_at,
+                          scheduled_image_id=str(image_id) if image_id is not None else None)
+
+    def due_drafts(self, now_iso: str) -> list[sqlite3.Row]:
+        """Queued drafts whose slot has arrived, oldest first."""
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE status='queued' AND scheduled_at <= ?"
+            " ORDER BY scheduled_at ASC",
+            (now_iso,),
+        ).fetchall()
+
+    def queued_drafts(self) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM drafts WHERE status='queued' ORDER BY scheduled_at ASC"
+        ).fetchall()
+
+    def expire_draft(self, draft_id: int) -> None:
+        self.update_draft(draft_id, status="expired")
+
+    def scheduled_count(self, start_iso: str, end_iso: str,
+                       exclude_draft_id: int | None = None) -> int:
+        """Drafts still queued OR already posted whose scheduled_at falls in
+        [start_iso, end_iso) — publish() never clears scheduled_at on a draft
+        it publishes, so a slot's cap holds even after its post has gone out,
+        not just while something is still waiting.
+
+        `exclude_draft_id` leaves out the draft currently being evaluated: a
+        queued draft already counts itself among rows matching its own
+        scheduled_at, which would make the cap look reached before it has ever
+        actually published.
+        """
+        sql = ("SELECT COUNT(*) AS n FROM drafts WHERE scheduled_at >= ? AND scheduled_at < ?"
+              " AND status IN ('queued','posted')")
+        args: tuple = (start_iso, end_iso)
+        if exclude_draft_id is not None:
+            sql += " AND id != ?"
+            args += (exclude_draft_id,)
+        return self.db.execute(sql, args).fetchone()["n"]
+
+    def image_by_id(self, image_id: int) -> sqlite3.Row | None:
+        return self.db.execute("SELECT * FROM draft_images WHERE id=?", (image_id,)).fetchone()
 
     # ---- day sessions (conversation continuity) -------------------------------
     def set_day_session(self, day: str, session_id: str, backend: str = "claude") -> None:

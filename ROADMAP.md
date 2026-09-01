@@ -133,3 +133,50 @@ git-ignored `PLAN.local.md` / `config.yaml`).
   backends between runs — falls back to a fresh one-shot call instead
 - Does not cover Codex Cloud tasks or the plain ChatGPT web/desktop Chat tab
   — see the README's [Limitations](README.md#limitations--non-goals)
+
+## Phase 9 — acting on a LinkedIn performance analysis  ✅ implemented
+Prompted by a manual export of `linkedin.com/in/<id>/recent-activity/` covering
+17 posts (2026-08-10 to 2026-08-30): every post fell in a narrow 04:30–11:01
+UTC band because post time = review time, and a five-day zero-reaction trough
+was at least partly confounded with an unrelated prompt change the same week
+— see `.claude/plans/plan.md` for the full evidence check, including which
+parts of the original analysis read cleaner than they actually are.
+- **Publish queue** (landed): `publish.window`/`publish.days` gate when an
+  approved draft actually reaches LinkedIn, separate from when you tapped
+  Approve. Empty/unset window keeps immediate publishing (the previous, and
+  default, behaviour) — opt-in for this instance, unchanged for everyone else.
+  A `server/pipeline/publish_window.py` pure-function module computes slots;
+  `Bot.publish_or_queue` decides now-vs-queued, an asyncio task started from
+  `post_init` polls `Store.due_drafts()` every `publish.poll_seconds`, and a
+  single **Post now anyway** button bypasses the queue for one post. A queued
+  draft older than `publish.max_age_days` expires unposted rather than landing
+  stale. `pipeline.max_drafts` dropped from 4 to 2 to match a narrowed
+  `publish.days` cadence without drafting fewer days — only publishing is gated.
+- **Generator** (landed): replaced the fixed 1,100–1,600 character target with
+  a variance requirement (`style-guide.md`/`draft-prompt.md`), shows the
+  drafter its own recent shapes (`drafts.shape`, `Store.recent_shapes`/
+  `days_since_shape`, rendered as `{RECENT_SHAPES}`/`{DAYS_SINCE_ASK}` in
+  `write_drafts`) so it stops repeating the same finding → number →
+  why-it-matters structure, adds an `ask` candidate class for open,
+  first-person questions (soft-capped at one a week via `days_since_shape`),
+  rebalanced how often posts end on a real question (one in three → one in
+  two), and narrowed the "never name our stack" rule to "What stays private" —
+  clients, partners, and vendors whose name reveals the method stay hidden;
+  public tools (the AI coding agents, models, hosting, datasets) are named
+  plainly.
+- **Images** (landed): dropped the brief's "no text in images" rule (wrong on
+  the evidence — the best-performing post had two words of clean display type
+  in it) from `IMAGE_BRIEF_PROMPT` and the `image.style_suffix` default, and
+  added a post-render check instead. `server/pipeline/image_check.py`'s
+  `check_image_text` runs one `run_llm` vision call (same Claude/Codex path
+  `digest.py`'s `describe_screenshots` already uses, not a separate vision
+  API) for malformed/nonsense text and legible dashboard-style content — the
+  actual failure mode. `Bot.start_image` auto re-renders once on a flagged
+  take without spending the user's `max_regenerations` budget (they never saw
+  the bad one); if the retry is still bad, it delivers anyway with a warning
+  in the caption. A checker failure (timeout, bad JSON) is logged and treated
+  as a pass — a broken checker must never cost a post. New `image.text_check`
+  / `image.text_check_model` / `image.text_check_retries` config keys.
+- Deliberately not building: an automated metrics loop (LinkedIn exposes no
+  member-post impressions via any API scope; the only source is the manual
+  export), a draft lint pass, or dropping images by default.

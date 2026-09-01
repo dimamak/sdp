@@ -71,33 +71,33 @@ means for them. Deliver the finding, not the investigation.
   between. The same text in 12 short lines beats 4 dense paragraphs.
 - **An enumerated list of 3+ concrete items is a valid post shape.** Use it when
   the day produced several real findings that don't need one narrative.
-- **Ending**: land on the last true thing. Roughly **one post in three** should
+- **Ending**: land on the last true thing. Roughly **one post in two** should
   instead end by genuinely inviting the reader in — how they'd approach it, what
-  they've seen, whether they've hit the same wall. Ask only when I actually want
-  the answer. Never "Agree?" / "Thoughts?" bait.
-- **Length: let the story set it — the strong posts land at 1,100–1,600
-  characters.** Never pad to reach that, and never compress a complete story to
-  get under it. Delete every sentence whose only job is proving I did the work,
-  then stop cutting. If a fact only supports 600 characters, that's a sign the
-  fact was thin, not that the post should be short.
+  they've seen, whether they've hit the same wall — whenever the day actually
+  contains a question I want answered. Ask only when I actually want the
+  answer. Never "Agree?" / "Thoughts?" bait.
+- **Length is set by the story, and the feed needs range.** A 400-character
+  post that says one true thing is a valid post; so is a 1,500-character one
+  that earns it. What is never valid is another post the same size as the
+  last one. Never pad, and never compress a complete story to hit a number.
 
-## Never name our stack
-Do not name any product, vendor, platform, framework, library, model, or data
-source we use or depend on — not the backend, database, hosting, model provider,
-proxy vendor, anti-bot vendor, marketplace, analytics tool, or client tooling.
-Replace each with its generic category, keeping the fact fully intact:
-- a named marketplace → "a large marketplace", "a major e-commerce platform"
-- a named commerce backend → "our e-commerce backend"
-- a named database/auth/analytics product → "our database", "our auth provider"
-- a named library or CLI → "the scraping client", "the queue", "the agent"
-- a named proxy/anti-bot vendor → "our proxy provider", "the anti-bot vendor"
+## What stays private
+Never name:
+- a client, partner, prospect, or anyone we do business with — anonymize to
+  the pattern ("a client", "a partner"). The pattern teaches, not the name.
+- a vendor whose role reveals how the product actually works: the marketplaces
+  and data sources we pull from, the proxy and anti-bot providers, the commerce
+  backend. Naming those tells a competitor the method.
+- unreleased feature names, internal URLs, pricing, margins, or proprietary
+  logic.
 
-Specificity must come from **numbers and the finding**, never from brand names.
-A post must still be concrete and first-hand after every name is removed; if
-removing the names empties it, the fact wasn't interesting enough — pick another.
+Everything else can be named plainly. The AI coding agents, models, hosting,
+observability and datasets used in the daily work are public tools that any
+practitioner would recognise, and naming them costs nothing.
 
-Names that MAY appear (edit this list; empty means none):
-- generic category terms only, e.g. "AI coding agents"
+The test: **would naming this tell a competitor how we do it, or tell a client
+something about their own account?** If not, use the name — it is more
+concrete than "the agent" and more honest than a generic category.
 
 ## Hard rules
 - English output, regardless of source language.

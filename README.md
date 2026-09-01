@@ -144,6 +144,24 @@ wrote the post* for an image brief, renders it, and sends it back with
 touches LinkedIn, only the final tap does. Turn it off entirely with
 `image.enabled: false`.
 
+Every render is checked for broken text — a misspelled word, an invented
+brand, a legible dashboard or slide — before it's shown to you. A flagged take
+is silently re-rendered once (it never counts against your regeneration
+budget, since you never saw it); if the retry is still bad, it's delivered
+anyway with a warning in the caption rather than blocking the post. Configure
+under `image.text_check*`.
+
+## Publish window
+
+By default, tapping Post with image / Post text-only sends it to LinkedIn
+immediately. Set `publish.window` (e.g. `"15:00-18:00"`) and it queues
+instead, going out at the next eligible slot on its own — useful if you
+approve first thing in the morning but don't want every post landing at the
+same hour. **Post now anyway** on the queued message bypasses it for that one
+post. `publish.days` caps which weekdays are eligible; `/status` lists what's
+currently queued. Leave `publish.window` empty for the old immediate
+behaviour.
+
 ## Privacy & safety
 
 For a tool that reads your coding transcripts, this is the part that matters

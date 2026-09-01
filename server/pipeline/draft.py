@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -9,6 +10,7 @@ import requests
 from ..util import get_logger
 from .claude_cli import extract_json
 from .llm import run_llm
+from .publish_window import next_slot, parse_window
 
 log = get_logger("pipeline.draft")
 
@@ -152,13 +154,9 @@ abstract metaphor or symbolic stand-in. Rules for the prompt you write:
   render that example's content literally and don't invent specifics (products,
   industries, settings) it doesn't actually contain — depict the real work or
   moment that produced it instead.
-- No text, letters, numbers or watermarks anywhere in the image; image models
-  render them badly and LinkedIn readers notice. Two exceptions: (1) if the post
-  names a specific company, show that company's real logo or brand mark somewhere
-  in the scene (screen, sign, product, packaging...), rendered as accurately as
-  you can; (2) if the feedback below explicitly asks for specific words to appear
-  in the image, include that exact text as a short, bold caption — feedback wins
-  over this rule.
+- If the post names a specific company, show that company's real logo or brand
+  mark somewhere in the scene (screen, sign, product, packaging...), rendered
+  as accurately as you can.
 - No recognisable real people.
 - The composition must fill the whole frame, edge to edge. Never ask for a
   cinematic, widescreen, anamorphic or film-still look: the model answers those
@@ -258,7 +256,8 @@ otherwise cut, or going long now that there's room), follow the note instead:
   that just barely fits is fragile to X's own link/emoji weighting.
 {hashtag_rule}
 - Every hard rule from the style guide earlier in this conversation still applies:
-  no stack names, no fabrication, anonymize people, not salesy.
+  keep clients/partners/method-revealing vendors private, no fabrication,
+  anonymize people, not salesy.
 
 Return ONLY a JSON object, no other text:
 {{"post_text": "the full X post, ready to publish"}}
@@ -439,6 +438,21 @@ def reddit_body(text: str) -> str:
     return out.strip()
 
 
+def _format_recent_shapes(rows: list[dict]) -> str:
+    if not rows:
+        return "(none yet)"
+    lines = ["| day | shape | chars | ended on a question | first line |",
+             "|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['day']} | {r['shape']} | {r['chars']} | "
+                     f"{'yes' if r['ended_with_question'] else 'no'} | {r['first_line']} |")
+    return "\n".join(lines)
+
+
+def _format_days_since_ask(days: int | None) -> str:
+    return "never" if days is None else f"{days} day{'s' if days != 1 else ''} ago"
+
+
 def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dict]]:
     """Draft one post per interesting fact found in the day.
 
@@ -447,11 +461,16 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
     """
     style = _prompt_file(cfg, "style_guide", "style-guide.md").read_text(encoding="utf-8")
     task = _prompt_file(cfg, "draft_prompt", "draft-prompt.md").read_text(encoding="utf-8")
-    hooks = store.recent_hooks(day, limit=int(cfg.get("pipeline.recent_hooks", 10)))
+    limit = int(cfg.get("pipeline.recent_hooks", 10))
+    hooks = store.recent_hooks(day, limit=limit)
+    shapes = store.recent_shapes(day, limit=limit)
+    days_since_ask = store.days_since_shape("ask", before_day=day)
     task = (task.replace("{LANGUAGE_OUT}", str(cfg.get("pipeline.language_out", "English")))
                 .replace("{MAX_DRAFTS}", str(cfg.get("pipeline.max_drafts", 4)))
                 .replace("{RECENT_HOOKS}",
-                         "\n".join(f"- {h}" for h in hooks) if hooks else "(none yet)"))
+                         "\n".join(f"- {h}" for h in hooks) if hooks else "(none yet)")
+                .replace("{RECENT_SHAPES}", _format_recent_shapes(shapes))
+                .replace("{DAYS_SINCE_ASK}", _format_days_since_ask(days_since_ask)))
     prompt = f"{style}\n\n{task}\n\n# Digest\n\n{digest}"
 
     # Each coding-session entry in the digest is a summary, not the transcript
@@ -490,6 +509,7 @@ def write_drafts(cfg, store, day: str, digest: str) -> tuple[list[int], list[dic
         ids.append(store.add_draft(
             day=day, text=text,
             rationale=cand.get("why") or cand.get("fact"),
+            shape=cand.get("shape") or None,
         ))
     log.info("%d draft(s) created for %s (%d rejected)", len(ids), day, len(rejected))
     return ids, rejected
@@ -523,6 +543,10 @@ def deliver_draft(cfg, store, draft_id: int, label: str = "") -> None:
         ]
     }
     head = label or f"📝 LinkedIn draft for {draft['day']}"
+    win = parse_window(cfg)
+    if win is not None:
+        slot = next_slot(cfg, datetime.now(timezone.utc)).astimezone(win.tz)
+        head += f" · next slot {slot.strftime('%a %H:%M %Z')}"
     text = f"{head}\n\n{draft['text']}"
     if draft["rationale"]:
         text += f"\n\n— why: {draft['rationale']}"
