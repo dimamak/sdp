@@ -1,0 +1,13 @@
+{
+  "id": "1234567890",
+  "author_handle": "example_author",
+  "text": "Anyone else seen Postgres logical replication slots blow up disk usage in prod?",
+  "created_at": "2026-09-01T12:00:00+00:00",
+  "views": 8000,
+  "likes": 60,
+  "reposts": 8,
+  "replies": 4,
+  "is_own": false,
+  "is_reply": false,
+  "is_repost": false
+}

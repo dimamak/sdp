@@ -18,13 +18,14 @@ stays on the event-loop thread.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -39,6 +40,10 @@ from ..pipeline.draft import converse, image_brief, reddit_body, reddit_title, x
 from ..pipeline.image_check import check_image_text
 from ..pipeline.image_gen import ImageGenError, generate_image
 from ..pipeline.publish_window import in_window, next_slot, parse_window, slot_taken
+from ..radar import pipeline as radar_pipeline
+from ..radar import reply as radar_reply
+from ..radar import retrieve as radar_retrieve
+from ..radar import watchlist as radar_watchlist
 from ..store import Store
 from ..util import get_logger
 from .linkedin_client import LinkedInClient, feed_url
@@ -130,6 +135,99 @@ def reddit_start_keyboard(draft_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📮 Reddit link", callback_data=f"rstart:{draft_id}")],
     ])
+
+
+def radar_keyboard(post_id: str, post_url: str, reply_text: str) -> InlineKeyboardMarkup:
+    """Copy/Open are plain client-side buttons — Telegram handles copy_text and
+    url entirely on-device, no callback ever fires for them. Only the bottom
+    row round-trips to on_callback. This deliberately departs from plan.md
+    §7's literal radcopy/radpost callback names, since those two aren't
+    actually callback-shaped: nothing here can ever open X's composer or tap
+    Post, so there is no automated-posting path to guard against."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Copy reply", copy_text=CopyTextButton(reply_text[:256])),
+         InlineKeyboardButton("↗️ Open post", url=post_url)],
+        [InlineKeyboardButton("✅ Replied", callback_data=f"radreplied:{post_id}"),
+         InlineKeyboardButton("🔁 Redo", callback_data=f"radredo:{post_id}")],
+        [InlineKeyboardButton("✏️ Edit", callback_data=f"radedit:{post_id}"),
+         InlineKeyboardButton("⏭ Skip", callback_data=f"radskip:{post_id}")],
+    ])
+
+
+def radar_ask_keyboard(post_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Skip", callback_data=f"radqskip:{post_id}")],
+    ])
+
+
+def radar_watchlist_add_keyboard(author_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add", callback_data=f"radadd:{author_id}"),
+         InlineKeyboardButton("Not now", callback_data=f"radnotnow:{author_id}"),
+         InlineKeyboardButton("🚫 Never", callback_data=f"radnever:{author_id}")],
+    ])
+
+
+def radar_watchlist_swap_keyboard(author_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔁 Swap", callback_data=f"radswap:{author_id}"),
+         InlineKeyboardButton("Keep incumbent", callback_data=f"radkeep:{author_id}"),
+         InlineKeyboardButton("🚫 Never", callback_data=f"radnever:{author_id}")],
+    ])
+
+
+def _fmt_rate(views_per_min: float) -> str:
+    v = float(views_per_min or 0)
+    return f"{v / 1000:.1f}k" if v >= 1000 else f"{v:.0f}"
+
+
+def radar_watchlist_add_text(candidate, size: int, cap: int) -> str:
+    handle = candidate["handle"]
+    rate = _fmt_rate(candidate["baseline_reach_rate"])
+    replies = candidate["median_replies_at_sighting"] or 0
+    overlap = radar_watchlist.overlap_count(candidate)
+    total_cost = (size + 1) * radar_watchlist.COST_PER_ACCOUNT_USD
+    return (
+        f"👤 @{handle} looks worth watching\n\n"
+        f"Seen {candidate['times_seen']} times · median {rate} views/min · "
+        f"usually {replies:.0f} replies when you see it\n"
+        f"{overlap} of their posts overlap your work\n\n"
+        f"Adding costs ~${radar_watchlist.COST_PER_ACCOUNT_USD:.2f}/mo → watchlist would be "
+        f"{size + 1}/{cap}, ~${total_cost:.2f}/mo"
+    )
+
+
+def radar_watchlist_swap_text(candidate, incumbent) -> str:
+    cand_rate = _fmt_rate(candidate["baseline_reach_rate"])
+    inc_rate = _fmt_rate(incumbent["baseline_reach_rate"])
+    overlap = radar_watchlist.overlap_count(candidate)
+    return (
+        f"🔁 @{candidate['handle']} looks stronger than @{incumbent['handle']}\n\n"
+        f"@{candidate['handle']}   {cand_rate} views/min median · "
+        f"{candidate['times_seen']} sightings · {overlap} topic matches\n"
+        f"@{incumbent['handle']}  {inc_rate} views/min median · "
+        f"{incumbent['times_seen']} sightings"
+    )
+
+
+def _radar_quote(text: str, limit: int = 400) -> str:
+    text = (text or "").strip()
+    return text[:limit] + "…" if len(text) > limit else text
+
+
+def radar_ask_text(post: dict, question: str) -> str:
+    handle = post.get("author_handle") or "?"
+    views = int(post.get("views") or 0)
+    return (f"❓ @{handle} · {views} views\n\n\"{_radar_quote(post.get('text', ''))}\"\n\n"
+            f"{question}\n\nReply here with the answer, or Skip.")
+
+
+def radar_draft_text(post: dict, reply_text: str, reason: str = "") -> str:
+    handle = post.get("author_handle") or "?"
+    views = int(post.get("views") or 0)
+    body = (f"🐦 @{handle} · {views} views\n\n\"{_radar_quote(post.get('text', ''))}\"\n\n"
+            f"↳ {reply_text}")
+    return f"{body}\n\n{reason}" if reason else body
 
 
 def reddit_submit_link(subreddit: str, title: str, body: str,
@@ -696,6 +794,186 @@ class Bot:
             await status.delete()
             await self._send_reddit_delivery(context, draft_id, subreddit, title, body)
 
+    # ---- X reply radar ---------------------------------------------------------
+
+    @staticmethod
+    def _radar_live_post(row) -> dict:
+        """Rebuild the fixture-shaped post dict cli.py/reply.py expect from a
+        stored radar_posts row."""
+        return {"id": row["post_id"], "author_handle": row["author_handle"],
+                "text": row["text"], "created_at": row["created_at"],
+                "views": row["views"], "author_id": row["author_id"]}
+
+    def _process_radar_answer(self, post: dict, question: str, answer: str) -> dict:
+        """Runs radar_pipeline.process_answer on a throwaway Store bound to
+        this worker thread — same "own Store: sqlite per-thread" rule
+        radar/scheduler.py follows, since process_answer mixes DB reads/writes
+        with the slow LLM call and self.store is bound to the event-loop
+        thread (see module docstring)."""
+        store = Store(self.cfg.path_of("store_dir"))
+        return radar_pipeline.process_answer(post, question, answer, self.cfg, store)
+
+    async def deliver_radar_result(self, tg_bot, post: dict, result: dict) -> None:
+        """Sends the Telegram card for an 'ask' or 'draft' decision. Takes a
+        bare telegram.Bot rather than a full Context, so the radar scheduler's
+        background thread can call this the same way a handler does — via
+        asyncio.run_coroutine_threadsafe against the loop captured in
+        Application.post_init (see start_radar below)."""
+        post_id = str(post["id"])
+        decision = result["decision"]
+        if decision == "ask":
+            await tg_bot.send_message(
+                self.chat_id, radar_ask_text(post, result["question"])[:4000],
+                reply_markup=radar_ask_keyboard(post_id))
+        elif decision == "draft":
+            post_url = x_tweet_url(post_id)
+            text = radar_draft_text(post, result["reply"], result.get("reason", ""))[:4000]
+            sent = await tg_bot.send_message(
+                self.chat_id, text,
+                reply_markup=radar_keyboard(post_id, post_url, result["reply"]))
+            self.store.update_radar_reply(result["reply_id"], tg_message_id=str(sent.message_id))
+
+    async def deliver_radar_growth_result(self, tg_bot, proposal) -> None:
+        """Sends the "add?"/"replace?" watchlist prompt (plan.md §2). Same
+        bare-Bot signature as deliver_radar_result so notify() (below) can
+        treat every radar Telegram surface uniformly."""
+        candidate = proposal.candidate
+        author_id = candidate["author_id"]
+        if proposal.kind == "add":
+            text = radar_watchlist_add_text(candidate, proposal.watchlist_size,
+                                            proposal.watchlist_cap)
+            await tg_bot.send_message(self.chat_id, text[:4000],
+                                       reply_markup=radar_watchlist_add_keyboard(author_id))
+        else:
+            text = radar_watchlist_swap_text(candidate, proposal.incumbent)
+            await tg_bot.send_message(self.chat_id, text[:4000],
+                                       reply_markup=radar_watchlist_swap_keyboard(author_id))
+
+    async def redo_radar_reply(self, tg_bot, row) -> None:
+        """'Redo' — a fresh take from a fresh retrieval pass, same one-row-
+        per-take shape as start_x/start_reddit's redo paths."""
+        post = self._radar_live_post(row)
+        prev = self.store.latest_radar_reply(row["post_id"])
+        n = (prev["n"] + 1) if prev else 1
+        status = await tg_bot.send_message(self.chat_id, "🔁 redrafting…")
+        # retrieval is a cheap in-process DB read, so it stays on the event-loop
+        # thread (self.store is thread-bound — see module docstring); only the
+        # slow LLM call below is worth offloading
+        matches = radar_retrieve.retrieve(self.store, post["text"], 8)
+        r = await asyncio.to_thread(radar_reply.draft_reply, self.cfg, post, matches)
+        await status.delete()
+        if r.status != "ready":
+            await tg_bot.send_message(self.chat_id, f"⚠️ redraft failed: {r.error}"[:4000])
+            return
+        reply_id = self.store.add_radar_reply(
+            row["post_id"], n=n, text=r.text, status="ready", source="claude",
+            evidence_json=json.dumps([m["summary"] for m in matches], ensure_ascii=False))
+        if prev is not None and prev["tg_message_id"]:
+            try:
+                await tg_bot.edit_message_reply_markup(
+                    self.chat_id, int(prev["tg_message_id"]), reply_markup=None)
+            except Exception as e:
+                log.debug("could not clear buttons on stale radar reply message: %s", e)
+        self.store.set_radar_post_state(row["post_id"], "suggested")
+        await self.deliver_radar_result(
+            tg_bot, post,
+            {"decision": "draft", "reply": r.text, "reply_id": reply_id,
+             "reason": row["score_reason"] or ""})
+
+    async def on_radar_growth_callback(self, tg_bot, q, action: str, author_id: str) -> None:
+        row = self.store.get_radar_author(author_id)
+        if row is None:
+            await q.edit_message_reply_markup(None)
+            return
+
+        if action == "radadd":
+            radar_watchlist.add_to_watchlist(self.store, author_id)
+            await q.edit_message_reply_markup(None)
+            await tg_bot.send_message(self.chat_id, f"➕ Added @{row['handle']} to the watchlist.")
+
+        elif action == "radswap":
+            # Recompute the weakest incumbent at tap-time rather than trusting
+            # the prompt's stale snapshot — the watchlist may have changed
+            # since it was sent (plan.md §2's hysteresis/grace guards gate
+            # *proposing* a swap, not a user's own confirmed tap).
+            await q.edit_message_reply_markup(None)
+            current = self.store.radar_watchlist_authors()
+            cap = radar_watchlist.watchlist_max(self.cfg)
+            if len(current) < cap:
+                radar_watchlist.add_to_watchlist(self.store, author_id)
+                await tg_bot.send_message(self.chat_id,
+                                          f"➕ Added @{row['handle']} to the watchlist.")
+                return
+            incumbents = sorted(current, key=radar_watchlist.strength)
+            if not incumbents:
+                await tg_bot.send_message(self.chat_id, "Nothing to swap out.")
+                return
+            weakest = incumbents[0]
+            radar_watchlist.remove_from_watchlist(self.store, weakest["author_id"])
+            radar_watchlist.add_to_watchlist(self.store, author_id)
+            await tg_bot.send_message(
+                self.chat_id, f"🔁 Swapped @{weakest['handle']} out for @{row['handle']}.")
+
+        elif action == "radnever":
+            radar_watchlist.never(self.store, author_id)
+            await q.edit_message_reply_markup(None)
+            await tg_bot.send_message(self.chat_id, f"🚫 Won't suggest @{row['handle']} again.")
+
+        elif action in ("radnotnow", "radkeep"):
+            await q.edit_message_reply_markup(None)
+            await tg_bot.send_message(self.chat_id, "👍 Left as-is.")
+
+    async def on_radar_callback(self, tg_bot, q, action: str, post_id: str) -> None:
+        if action in ("radadd", "radswap", "radnever", "radnotnow", "radkeep"):
+            await self.on_radar_growth_callback(tg_bot, q, action, post_id)
+            return
+
+        row = self.store.get_radar_post(post_id)
+        if row is None:
+            await q.edit_message_reply_markup(None)
+            return
+
+        if action == "radreplied":
+            rep = self.store.latest_radar_reply(post_id)
+            if rep is not None:
+                self.store.update_radar_reply(rep["id"], status="replied")
+            self.store.set_radar_post_state(post_id, "replied")
+            if row["author_id"]:
+                self.store.mark_radar_author_replied(row["author_id"])
+            await q.edit_message_reply_markup(None)
+            await tg_bot.send_message(self.chat_id, "✅ Marked replied.")
+
+        elif action == "radredo":
+            await q.edit_message_reply_markup(None)
+            await self.redo_radar_reply(tg_bot, row)
+
+        elif action == "radedit":
+            prev = self.store.editing_radar_reply()
+            if prev is not None and prev["post_id"] != post_id:
+                self.store.update_radar_reply(prev["id"], status="ready")
+            rep = self.store.latest_radar_reply(post_id)
+            if rep is None:
+                await tg_bot.send_message(self.chat_id, "No radar reply to edit yet.")
+                return
+            self.store.update_radar_reply(rep["id"], status="editing")
+            await tg_bot.send_message(
+                self.chat_id,
+                "✏️ Send the exact replacement reply as your next message "
+                "(it will be used verbatim, the model won't see it).")
+
+        elif action == "radskip":
+            rep = self.store.latest_radar_reply(post_id)
+            if rep is not None:
+                self.store.update_radar_reply(rep["id"], status="skipped")
+            self.store.set_radar_post_state(post_id, "skipped")
+            await q.edit_message_reply_markup(None)
+            await tg_bot.send_message(self.chat_id, "⏭ Skipped.")
+
+        elif action == "radqskip":
+            self.store.set_radar_post_state(post_id, "skipped", pending_question=None)
+            await q.edit_message_reply_markup(None)
+            await tg_bot.send_message(self.chat_id, "⏭ Skipped.")
+
     # ---- handlers ------------------------------------------------------------
 
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -704,6 +982,9 @@ class Bot:
         q = update.callback_query
         await q.answer()
         action, _, draft_id_s = q.data.partition(":")
+        if action.startswith("rad"):
+            await self.on_radar_callback(context.bot, q, action, draft_id_s)
+            return
         draft_id = int(draft_id_s)
         draft = self.store.get_draft(draft_id)
         if draft is None:
@@ -884,6 +1165,34 @@ class Bot:
 
     async def _process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
                                text: str):
+        # explicit verbatim-replace mode for a radar reply (set by "Edit") — checked
+        # first since the radar lane is independent of the LinkedIn pipeline below
+        redit_reply = self.store.editing_radar_reply()
+        if redit_reply is not None:
+            self.store.update_radar_reply(
+                redit_reply["id"], text=text, source="manual", status="ready")
+            post_url = x_tweet_url(redit_reply["post_id"])
+            await update.message.reply_text(
+                f"Updated reply:\n\n{text}"[:4000],
+                reply_markup=radar_keyboard(redit_reply["post_id"], post_url, text))
+            return
+
+        # a radar question is waiting on your free-text answer (plan.md §6 step 2b)
+        awaiting = self.store.radar_post_awaiting_answer()
+        if awaiting is not None:
+            post = self._radar_live_post(awaiting)
+            result = await asyncio.to_thread(
+                self._process_radar_answer, post, awaiting["pending_question"], text)
+            if result["decision"] == "draft":
+                await self.deliver_radar_result(context.bot, post, result)
+            elif result["decision"] == "saved_stale":
+                await update.message.reply_text(
+                    "Noted — thanks, but that post's window already closed.")
+            else:
+                await update.message.reply_text(
+                    f"⚠️ {result.get('reason', 'could not draft a reply')}"[:4000])
+            return
+
         # explicit verbatim-replace mode for the LinkedIn draft (set by "Replace text")
         draft = self.store.latest_editing_draft()
         if draft is not None:
@@ -1051,8 +1360,43 @@ class Bot:
             "the LinkedIn text reused verbatim (hashtags stripped) with a short generated "
             "title, since Reddit needs one and LinkedIn posts don't have one. Nothing is "
             "ever submitted by me; you tap Submit yourself in your browser. /reddit "
-            "recovers that step if I ever miss it.\n"
+            "recovers that step if I ever miss it.\n\n"
+            "If the X reply radar is enabled, a fast-travelling post from your watchlist "
+            "shows up here with a drafted reply — Copy reply puts it on your clipboard, "
+            "Open post takes you to it, and you paste and send by hand. It never posts, "
+            "likes, follows, or opens anything for you.\n"
             "/status shows health.")
+
+
+def start_radar(cfg: Config, bot: Bot, tg_bot, loop: asyncio.AbstractEventLoop) -> None:
+    """Bridges the radar's background threads (Lane B's poller, Lane A's
+    local API) to Telegram.
+
+    PTB's Application only accepts bot API calls made from its own event
+    loop, so both threads hand their notify() calls to that loop with
+    run_coroutine_threadsafe instead of awaiting them directly. Called from
+    Application.post_init, the first point at which that loop exists.
+    radar_scheduler.start()/localapi.start() no-op on their own when
+    radar.enabled is false, so this is safe to call unconditionally.
+    """
+    from ..radar import scheduler as radar_scheduler
+    from . import localapi
+
+    def notify(post, result) -> None:
+        async def _send() -> None:
+            try:
+                if result["decision"] == "budget_warning":
+                    await tg_bot.send_message(bot.chat_id, result["message"])
+                elif result["decision"] in ("watchlist_add", "watchlist_replace"):
+                    await bot.deliver_radar_growth_result(tg_bot, result["proposal"])
+                else:
+                    await bot.deliver_radar_result(tg_bot, post, result)
+            except Exception:
+                log.exception("radar notify failed")
+        asyncio.run_coroutine_threadsafe(_send(), loop)
+
+    radar_scheduler.start(cfg, notify=notify)
+    localapi.start(cfg, notify=notify)
 
 
 def start_waha_webhook(cfg: Config):
@@ -1092,11 +1436,14 @@ def start_waha_webhook(cfg: Config):
 
 
 async def _post_init(application: Application) -> None:
-    """Starts the publish-queue worker on the same event loop PTB polls on —
-    see Bot.run_publish_queue for why this is a plain asyncio task rather than
-    PTB's JobQueue (that needs an extra we don't depend on)."""
+    """Starts the publish-queue worker and the radar bridge on the same event
+    loop PTB polls on — see Bot.run_publish_queue for why the publish queue is
+    a plain asyncio task rather than PTB's JobQueue (that needs an extra we
+    don't depend on), and start_radar for why radar needs this loop handle."""
     bot: Bot = application.bot_data["bot"]
+    cfg: Config = application.bot_data["cfg"]
     asyncio.create_task(bot.run_publish_queue(application.bot))
+    start_radar(cfg, bot, application.bot, asyncio.get_running_loop())
 
 
 def main() -> None:
@@ -1124,6 +1471,7 @@ def main() -> None:
     bot = Bot(cfg)
     app = Application.builder().token(token).post_init(_post_init).build()
     app.bot_data["bot"] = bot
+    app.bot_data["cfg"] = cfg
     app.add_handler(CallbackQueryHandler(bot.on_callback))
     app.add_handler(CommandHandler("status", bot.on_status))
     app.add_handler(CommandHandler("help", bot.on_help))

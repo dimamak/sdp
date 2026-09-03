@@ -16,6 +16,7 @@ Write-Host "`n=== dailypost laptop status ===" -ForegroundColor Cyan
 
 # --- push configuration and connectivity ------------------------------------
 $conf = Join-Path $scriptDir "push.conf"
+$radarPort = $null
 if (-not (Test-Path $conf)) {
     Fail "push.conf missing - run setup\wizard_laptop.ps1"
 } else {
@@ -26,10 +27,14 @@ if (-not (Test-Path $conf)) {
     $probe = & ssh -o BatchMode=yes -o ConnectTimeout=10 $remote "echo ok; hostname" 2>$null
     if ($probe -match "ok") { Pass "ssh to '$remote' works ($($probe[-1]))" }
     else { Fail "ssh to '$remote' FAILED - check ~/.ssh/config if the server moved" }
+    $m = Select-String -Path $conf -Pattern '^RADAR_PORT=(\S+)$'
+    if ($m) { $radarPort = $m.Matches.Groups[1].Value.Trim() }
 }
 
 # --- scheduled tasks ---------------------------------------------------------
-foreach ($t in @("dailypost-push", "dailypost-record-activity", "dailypost-record-audio")) {
+$tasks = @("dailypost-push", "dailypost-record-activity", "dailypost-record-audio")
+if ($radarPort) { $tasks += "dailypost-radar-tunnel" }
+foreach ($t in $tasks) {
     $q = schtasks /Query /TN $t /FO LIST /V 2>$null
     if (-not $q) { Fail "$t not registered"; continue }
     $status = (($q | Select-String '^Status:').Line -split ':')[1].Trim()
@@ -40,11 +45,19 @@ foreach ($t in @("dailypost-push", "dailypost-record-activity", "dailypost-recor
         if ($result -eq "0") { Pass "$t last run $last (ok)" }
         else { Fail "$t last run $last returned $result" }
     } else {
-        # Recorders are launched through wscript, which returns immediately, so
-        # the TASK completes while the recorder keeps running. Task state says
-        # nothing about capture — the process check below is what matters here.
+        # Recorders and the radar tunnel are launched through wscript, which
+        # returns immediately, so the TASK completes while the child process
+        # keeps running. Task state says nothing about capture/tunnel health —
+        # the process/port checks below are what matter.
         Info "$t registered (last run $last)"
     }
+}
+
+# --- radar tunnel port -------------------------------------------------------
+if ($radarPort) {
+    $conn = Test-NetConnection -ComputerName 127.0.0.1 -Port $radarPort -WarningAction SilentlyContinue
+    if ($conn.TcpTestSucceeded) { Pass "radar tunnel: 127.0.0.1:$radarPort is listening" }
+    else { Fail "radar tunnel: 127.0.0.1:$radarPort NOT listening - run: schtasks /Run /TN dailypost-radar-tunnel" }
 }
 
 # --- processes: exactly one of each, no orphans ------------------------------

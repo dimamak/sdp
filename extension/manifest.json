@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "sdp — X reply radar",
+  "version": "0.1.0",
+  "description": "Reads posts already rendered on x.com and surfaces high-reach ones with a drafted reply in sdp's Telegram bot. Never clicks, likes, follows, hovers, or posts anything.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "js": ["selectors.js", "autoscroll.js", "card.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

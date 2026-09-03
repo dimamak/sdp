@@ -75,6 +75,19 @@ def prune_old_images(cfg, store) -> None:
         log.info("pruned %d unposted image(s)", n)
 
 
+def prune_radar_posts(cfg, store) -> None:
+    """plan.md §8: the radar's `radar_posts`/`radar_replies` join the existing
+    30-day retention job; `radar_authors` is never pruned here, it's the
+    accumulated watchlist judgement, not a cache of individual sightings."""
+    days = int(cfg.get("retention_days", 30) or 0)
+    if days <= 0:
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    n = store.prune_radar_posts(cutoff)
+    if n:
+        log.info("pruned %d radar post(s)", n)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
@@ -92,7 +105,13 @@ def main(argv=None) -> int:
         if not acquired:
             log.warning("another run for %s is still in progress; skipping", cfg.path)
             return 0
-        return _run(cfg, args)
+        rc = _run(cfg, args)
+        # Independent of whether the daily post drafted (the digest can be
+        # empty, the laptop can still be asleep) -- radar pruning runs every
+        # night this job runs at all, except --dry-run (no side effects).
+        if not args.dry_run:
+            prune_radar_posts(cfg, Store(cfg.path_of("store_dir")))
+        return rc
 
 
 def _run(cfg: Config, args: argparse.Namespace) -> int:

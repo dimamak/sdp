@@ -2,8 +2,8 @@
 
     python -m setup.wizard              # full guided setup (idempotent, re-runnable)
     python -m setup.wizard --source X   # re-run one step: base|claude|audio|activity|
-                                        #   telegram|gmail|whatsapp|linkedin|bot|
-                                        #   autostart|cron|systemd
+                                        #   telegram|gmail|whatsapp|linkedin|x|reddit|
+                                        #   radar|bot|autostart|cron|systemd
     python -m setup.wizard --doctor     # health check of everything enabled
 
 Writes config.yaml / .env next to the repo root; never touches code.
@@ -55,7 +55,8 @@ def waha_container() -> str:
 
 def ports_used_by_other_instances() -> set[int]:
     """Ports already claimed by other instances on this server, so a new one
-    never defaults onto a neighbour's WAHA container or webhook listener."""
+    never defaults onto a neighbour's WAHA container, webhook listener, or
+    radar local API."""
     used: set[int] = set()
     for other in [REPO / "config.yaml", *(REPO / "instances").glob("*/config.yaml")]:
         if not other.exists() or (CONFIG.exists() and other.resolve() == CONFIG.resolve()):
@@ -75,7 +76,28 @@ def ports_used_by_other_instances() -> set[int]:
                     used.add(int(url.rsplit(":", 1)[1]))
                 except ValueError:
                     pass
+        radar_port = (d.get("radar", {}) or {}).get("extension", {}).get("port")
+        if radar_port:
+            used.add(int(radar_port))
     return used
+
+
+def first_free_port(start: int, taken: set[int]) -> int:
+    """First port from `start` that's neither claimed by a sibling instance
+    (`taken`, from `ports_used_by_other_instances()`) nor already bound on
+    this host."""
+    import socket
+    p = start
+    while p < start + 100:
+        if p not in taken:
+            with socket.socket() as s:
+                try:
+                    s.bind(("127.0.0.1", p))
+                    return p
+                except OSError:
+                    pass
+        p += 1
+    return start
 
 def venv_pip() -> Path:
     return REPO / ".venv" / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
@@ -771,20 +793,6 @@ def step_whatsapp(data: dict) -> None:
 
     taken = ports_used_by_other_instances()
 
-    def first_free(start: int) -> int:
-        import socket
-        p = start
-        while p < start + 100:
-            if p not in taken:
-                with socket.socket() as s:
-                    try:
-                        s.bind(("127.0.0.1", p))
-                        return p
-                    except OSError:
-                        pass
-            p += 1
-        return start
-
     def current_waha_port() -> int | None:
         # if OUR container already runs, keep its port — otherwise a redo of this
         # step would see the port as "busy" (by WAHA itself) and drift to a new one
@@ -796,7 +804,7 @@ def step_whatsapp(data: dict) -> None:
 
     existing = get_source(data, "whatsapp") or {}
     port = ask("webhook port (localhost)",
-               str(existing.get("webhook_port") or first_free(8477)))
+               str(existing.get("webhook_port") or first_free_port(8477, taken)))
 
     # One WAHA container can host several named sessions (verified on the Core
     # tier), so a second person does not need a second container — just their own
@@ -837,7 +845,7 @@ def step_whatsapp(data: dict) -> None:
     else:
         container = waha_container()
         session_name = "default" if not INSTANCE else session_name
-        default_port = current_waha_port() or first_free(3000)
+        default_port = current_waha_port() or first_free_port(3000, taken)
         waha_port = int(ask("WAHA API host port (localhost)", str(default_port)))
 
     gw, why = webhook_bind_host()
@@ -1083,6 +1091,83 @@ def step_reddit(data: dict) -> None:
     reddit.setdefault("min_hours_between_posts", 48)
     reddit.setdefault("max_link_chars", 4000)
     ok(f"Reddit draft assist on for r/{sub}")
+
+
+def step_radar(data: dict) -> None:
+    """X reply radar: a browser extension you scroll x.com with (Lane A, free)
+    plus an optional capped API poll of a watchlist (Lane B) surface replyable
+    posts and draft a reply for your approval in Telegram. Discovery and draft
+    assist only — no code path here ever calls POST /2/tweets; you paste or
+    send the reply yourself."""
+    print("\n== X reply radar (discovery + draft assist, never posts) ==")
+    print("  Lane A is a browser extension that reads posts as you scroll x.com —")
+    print("  free, and the only lane that discovers new accounts worth watching.")
+    print("  Lane B is an optional, budget-capped API poll of a short watchlist,")
+    print("  once it has at least one entry. Both only ever draft a reply for you")
+    print("  to review in Telegram; nothing here posts to X automatically.")
+    radar = data.setdefault("radar", {})
+    if not yes("enable the X reply radar?", radar.get("enabled", False)):
+        radar["enabled"] = False
+        return
+
+    from server.radar.watchlist import COST_PER_ACCOUNT_USD
+
+    budget_in = ask("monthly Lane B budget in USD (0 = extension-only, no API polling)",
+                    str(radar.get("monthly_budget_usd", 5.0)))
+    budget = float(budget_in) if budget_in else 0.0
+    radar["enabled"] = True
+    radar["monthly_budget_usd"] = budget
+    cap = max(0, int(budget // COST_PER_ACCOUNT_USD))
+    ok(f"${budget:.2f}/mo -> watchlist can grow to {cap} account(s) "
+       f"(~${COST_PER_ACCOUNT_USD:.2f}/account/month); it starts empty and grows "
+       "one Telegram prompt at a time as the extension sights accounts")
+
+    seeds_in = ask("seed watchlist handles, comma-separated (empty = start cold)",
+                  ", ".join(radar.get("watchlist", []) or []))
+    radar["watchlist"] = [h.strip().lstrip("@") for h in seeds_in.split(",") if h.strip()]
+
+    x_keys = ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET")
+    if budget > 0 and not all(env_get(k) for k in x_keys):
+        warn("no X API credentials found — Lane B (API polling) stays idle until "
+            "they're set; the extension (Lane A) still works on its own. "
+            "Configure credentials any time with: python -m setup.wizard --source x")
+    elif budget > 0:
+        ok("Lane B: using existing X credentials (same App as the X posting step)")
+
+    token = env_get("RADAR_LOCAL_TOKEN") or secrets.token_hex(24)
+    env_set("RADAR_LOCAL_TOKEN", token)
+
+    ext = radar.setdefault("extension", {})
+    ext.setdefault("enabled", True)
+    taken = ports_used_by_other_instances()
+    port = int(ask("local API port (the browser extension's service worker talks to it)",
+                   str(ext.get("port") or first_free_port(8765, taken))))
+    ext["port"] = port
+
+    laptop = data.get("mode") == "laptop"
+    print("\n  Browser extension install:")
+    print("    1. chrome://extensions -> enable Developer mode -> Load unpacked ->")
+    print("       select this repo's extension/ folder (or its unzipped copy).")
+    print("    2. Open the extension's options page and set:")
+    print(f"         token:    {token}")
+    print(f"         endpoint: http://127.0.0.1:{port}")
+    if not laptop:
+        host = data.get("ssh_host") or ask("hostname/IP this server's SSH is reachable at", "")
+        if host:
+            data["ssh_host"] = host
+        user = data.get("run_as_user", "user")
+        print("    3. Keep an SSH tunnel open on the laptop while you browse x.com. If")
+        print("       that laptop already runs laptop/push_daily.sh, set")
+        print(f"       RADAR_PORT={port} in its laptop/push.conf and run once:")
+        print("         powershell -ExecutionPolicy Bypass -File "
+              "laptop\\install_radar_tunnel_task.ps1")
+        print("       (registers a logon task that reconnects on drop — see")
+        print("       laptop/radar_tunnel.sh). Otherwise, run manually:")
+        print(f"         ssh -N -L {port}:127.0.0.1:{port} {user}@{host or '<server>'}")
+        print("       The extension always talks to 127.0.0.1 — it has no notion of")
+        print("       laptop vs. server mode.")
+
+    ok("radar configured — (re)start the bot for the local API to pick this up")
 
 
 def step_image(data: dict) -> None:
@@ -1534,6 +1619,51 @@ def doctor() -> int:
         return f"authenticated as @{r.json()['data']['username']}"
     check("x", _x)
 
+    def _radar():
+        if not cfg.get("radar.enabled", False):
+            return "disabled"
+        import requests
+        port = int(cfg.get("radar.extension.port", 8765))
+        token = cfg.secret("RADAR_LOCAL_TOKEN")
+        if not token:
+            raise RuntimeError(
+                "RADAR_LOCAL_TOKEN not set — the extension endpoint rejects everything")
+        try:
+            r = requests.post(f"http://127.0.0.1:{port}/radar/posts",
+                              headers={"Authorization": f"Bearer {token}"}, json=[], timeout=5)
+            r.raise_for_status()
+        except Exception as e:
+            raise RuntimeError(
+                f"local API not reachable on 127.0.0.1:{port} — is the bot running? "
+                f"({e})") from e
+        bits = [f"local API up on :{port}"]
+
+        from server.radar import scheduler, spend, watchlist
+        from server.store import Store
+        store = Store(cfg.path_of("store_dir"))
+        age = scheduler.last_poll_age_seconds(cfg)
+        if age is None:
+            bits.append("Lane B has never polled (no watchlist entries yet, or "
+                       "X credentials missing)")
+        else:
+            interval = int(cfg.get("radar.poll_seconds", scheduler.DEFAULT_POLL_SECONDS))
+            stalled = " (stalled)" if age > interval * 2 + 60 else ""
+            bits.append(f"Lane B last polled {_ago(age)} ago{stalled}")
+
+        st = spend.status(cfg, store)
+        blocked = " BLOCKED" if st.blocked else ""
+        bits.append(f"spend ${st.spent:.2f}/${st.budget:.2f}{blocked}")
+
+        cap = watchlist.watchlist_max(cfg)
+        bits.append(f"watchlist {len(store.radar_watchlist_authors())}/{cap}")
+
+        if not laptop:
+            bits.append("SSH tunnel not independently verifiable from the server — "
+                       f"confirm it's open: ssh -N -L {port}:127.0.0.1:{port} "
+                       f"{cfg.get('run_as_user', 'user')}@<host>")
+        return "; ".join(bits)
+    check("radar", _radar)
+
     def _gemini():
         if not cfg.get("image.enabled", True):
             return "disabled"
@@ -1650,8 +1780,8 @@ STEPS = {
     "activity": step_activity, "telegram": step_telegram,
     "bot": step_bot, "gmail": step_gmail, "whatsapp": step_whatsapp,
     "pair": step_pair, "linkedin": step_linkedin, "x": step_x, "reddit": step_reddit,
-    "image": step_image, "laptop": step_laptop, "autostart": step_autostart,
-    "cron": step_cron, "systemd": step_systemd,
+    "radar": step_radar, "image": step_image, "laptop": step_laptop,
+    "autostart": step_autostart, "cron": step_cron, "systemd": step_systemd,
 }
 
 
@@ -1744,6 +1874,13 @@ def _done_reddit(data):
         return f"r/{r['subreddit']}"
 
 
+def _done_radar(data):
+    r = data.get("radar", {})
+    if r.get("enabled") and env_get("RADAR_LOCAL_TOKEN"):
+        port = r.get("extension", {}).get("port")
+        return f"enabled, local API port {port}"
+
+
 def _done_image(data):
     if env_get("GEMINI_API_KEY") and data.get("image", {}).get("enabled"):
         return f"images on ({data['image'].get('model', 'gemini-3-pro-image')})"
@@ -1777,8 +1914,8 @@ DONE_PROBES = {
     "activity": _done_activity, "telegram": _done_telegram,
     "bot": _done_bot, "gmail": _done_gmail, "whatsapp": _done_whatsapp,
     "pair": _done_pair, "linkedin": _done_linkedin, "x": _done_x, "reddit": _done_reddit,
-    "image": _done_image, "laptop": _done_laptop, "autostart": _done_autostart,
-    "cron": _done_cron, "systemd": _done_systemd,
+    "radar": _done_radar, "image": _done_image, "laptop": _done_laptop,
+    "autostart": _done_autostart, "cron": _done_cron, "systemd": _done_systemd,
 }
 
 
@@ -1859,10 +1996,13 @@ def main(argv=None) -> int:
             order.append("whatsapp")
         # autostart last: it starts the process, so everything it runs should
         # already be configured by the time it does
-        order += ["linkedin", "image", "x", "reddit", "autostart"]
+        order += ["linkedin", "image", "x", "reddit", "radar", "autostart"]
     else:
+        # radar after "laptop": it reuses data["ssh_host"] (asked there) to print
+        # the tunnel command, and before "systemd" so the bot service it starts
+        # already has radar.enabled reflecting this step's answer.
         order = ["base", "llm", "claude", "audio", "activity", "telegram", "bot", "gmail",
-                 "whatsapp", "pair", "linkedin", "laptop", "cron", "systemd"]
+                 "whatsapp", "pair", "linkedin", "laptop", "radar", "cron", "systemd"]
 
     print("(steps already completed are skipped — answer y to redo one)")
     failed = []

@@ -431,4 +431,76 @@ transcription:
                                        # language settings on real recordings)
   max_files_per_run: 200
 
+# ---------------------------------------------------------------------------
+# X reply radar (optional, OFF by default). Grows the user's network through
+# replies rather than posts: find a fresh, fast-travelling X post, draft a
+# reply grounded in the user's own harvested material, and hand it to the
+# user to send by hand. It NEVER posts automatically and never calls the X
+# create-tweet endpoint — X's automation rules ban unsolicited automated
+# replies, and this is a discovery-and-draft assist, same shape as the Reddit
+# step above.
+#
+# Two discovery lanes feed the same scoring/drafting pipeline: Lane B is the
+# budget-capped API poller (server/radar/poll.py + scheduler.py) watching a
+# handle watchlist; Lane A is the browser extension's passive DOM read,
+# delivered to server/bot/localapi.py (loopback-only, RADAR_LOCAL_TOKEN in
+# .env). Telegram is the delivery surface for both lanes today; the
+# extension's own in-page card, auto-scroll, and watchlist-growth prompts
+# land in later phases — the growth/extension keys below are harmless until
+# then.
+# ---------------------------------------------------------------------------
+radar:
+  enabled: false
+  active_hours: "08:00-23:00"     # both lanes idle outside this window (local time)
+  poll_seconds: 300               # Lane B poll cadence
+  monthly_budget_usd: 5.0         # Lane B hard-stops at 100% of this; Lane A is unaffected
+  reply_max_chars: 256            # Telegram's copy-to-clipboard button caps at 256
+
+  # Scoring gates (server/radar/score.py) — a post outside these is discarded,
+  # never drafted, regardless of how well it would otherwise score.
+  min_age_minutes: 3              # views/minute denominator hasn't settled before this
+  max_age_minutes: 25             # too late to be an early reply after this
+  min_views: 500                  # no reach worth borrowing below this
+  max_existing_replies: 25        # the early-reply slot is gone above this
+  min_score: 0.55                 # evidence found but overall score below this -> discard, not draft
+
+  # Account-safety caps (server/radar/pipeline.py) — hard stops, not advice.
+  max_drafts_per_hour: 3
+  max_suggestions_per_day: 12
+
+  ask_when_no_evidence: true       # nothing in your history for this post -> ask, don't drop it
+
+  # Scoring weights (server/radar/score.py) — must be present for score_post's
+  # defaults to apply; reach is views-per-minute, not follower count (it isn't
+  # in the DOM and doesn't survive X's timeline virtualization on re-observation).
+  reach_rate_cap: 500             # views/min treated as saturating the reach component
+  weights: {reach: 0.4, quality: 0.2, crowdedness: 0.15, relevance: 0.25}
+
+  # optional overrides for the radar's drafting prompts, same convention as
+  # pipeline.style_guide / pipeline.draft_prompt above:
+  # reply_prompt: /opt/dailypost/data/reply-prompt.md
+  # question_prompt: /opt/dailypost/data/question-prompt.md
+
+  watchlist: []                    # handles Lane B polls; starts empty, grows via §2 prompts
+  watchlist_max: null              # null = floor(monthly_budget_usd / 0.30)
+  growth:
+    min_observations: 3
+    min_reach_rate: 200            # views/min floor a candidate's posts must clear -- tune live
+    min_topic_overlap: 0.3         # fraction of a candidate's posts that must match your corpus
+    swap_margin: 0.25              # a candidate must beat the incumbent by 25% to replace it
+    grace_days: 14                 # new incumbents are protected from swap-out this long
+    repropose_days: 30
+    max_watchlist_prompts_per_day: 1
+
+  api:
+    active_hours: null             # null = inherit radar.active_hours
+
+  extension:
+    enabled: true
+    port: 8765                     # server/bot/localapi.py, bound to 127.0.0.1 only
+    active_hours: null             # null = inherit radar.active_hours
+    autoscroll: false               # opt-in second-screen auto-scroll; see docs
+    autoscroll_source: home        # home|following
+    max_screens_per_hour: 40
+
 retention_days: 30                     # prune raw files under store files/ after N days

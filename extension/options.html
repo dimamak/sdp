@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>sdp — X reply radar</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; max-width: 480px; margin: 24px auto; color: #0f1419; }
+    label { display: block; margin: 12px 0 4px; font-weight: 600; }
+    input[type="text"], input[type="password"], input[type="number"] {
+      width: 100%; padding: 6px 8px; box-sizing: border-box; font: inherit;
+    }
+    .hint { color: #536471; font-size: 12px; margin-top: 2px; }
+    fieldset { margin-top: 20px; }
+    button { margin-top: 16px; padding: 8px 18px; font: inherit; cursor: pointer; }
+    #status { margin-left: 10px; color: #00ba7c; }
+  </style>
+</head>
+<body>
+  <h3>sdp — X reply radar</h3>
+  <p class="hint">Never posts, likes, or follows — it only reads posts already on the page
+     and shows you a drafted reply. Values here must match your sdp <code>.env</code>
+     (<code>RADAR_LOCAL_TOKEN</code>) and <code>config.yaml</code>
+     (<code>radar.extension.port</code>). In server mode, keep an SSH tunnel open first:
+     <code>ssh -N -L &lt;port&gt;:127.0.0.1:&lt;port&gt; user@server</code>.</p>
+
+  <label for="token">Local API token</label>
+  <input id="token" type="password" autocomplete="off">
+
+  <label for="port">Local API port</label>
+  <input id="port" type="number" value="8765">
+
+  <label for="ownHandle">Your own @handle</label>
+  <input id="ownHandle" type="text" placeholder="yourhandle">
+  <div class="hint">So the radar skips your own posts.</div>
+
+  <fieldset>
+    <legend>Auto-scroll radar tab (opt-in, off by default)</legend>
+    <label><input id="autoscroll" type="checkbox"> Enable on the <code>/home</code> tab</label>
+    <div class="hint">Scrolls only — never clicks, likes, follows, or posts. Pauses on real
+      input and stops after the screen cap below.</div>
+    <label for="activeHoursStart">Active window (leave blank for always-on)</label>
+    <input id="activeHoursStart" type="text" placeholder="08:00" style="width:45%">
+    –
+    <input id="activeHoursEnd" type="text" placeholder="23:00" style="width:45%">
+    <label for="maxScreensPerHour">Max screens/hour</label>
+    <input id="maxScreensPerHour" type="number" value="40">
+  </fieldset>
+
+  <button id="save">Save</button>
+  <span id="status"></span>
+  <script src="options.js"></script>
+</body>
+</html>

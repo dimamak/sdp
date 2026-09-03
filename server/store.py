@@ -97,6 +97,67 @@ CREATE TABLE IF NOT EXISTS day_sessions (
     session_id TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- X reply radar (off by default, see plan.md). One row per candidate post
+-- either lane sights; state tracks it from first sighting through delivery.
+CREATE TABLE IF NOT EXISTS radar_posts (
+    id INTEGER PRIMARY KEY,
+    post_id TEXT NOT NULL UNIQUE,
+    author_id TEXT, author_handle TEXT,
+    text TEXT, created_at TEXT,
+    lane TEXT,                      -- api|extension
+    first_seen_at TEXT,
+    views INTEGER, replies INTEGER, likes INTEGER, reposts INTEGER,
+    metrics_history_json TEXT,      -- Lane B only; free via 24h dedup
+    reach_rate REAL,                -- views/min at first sighting
+    score REAL, score_reason TEXT,
+    -- seen|scored|drafting|asking|suggested|replied|skipped|expired
+    state TEXT DEFAULT 'seen',
+    pending_question TEXT            -- the §6 ask-a-question waiting on your free-text answer
+);
+
+-- One row per author either lane has ever sighted; carries the whole §2
+-- watchlist promotion/demotion state. Not pruned — it's accumulated judgement.
+CREATE TABLE IF NOT EXISTS radar_authors (
+    author_id TEXT PRIMARY KEY,
+    handle TEXT,
+    tier INTEGER DEFAULT 2,
+    times_seen INTEGER DEFAULT 0,
+    baseline_reach_rate REAL, observations INTEGER DEFAULT 0,
+    median_replies_at_sighting REAL,
+    topic_overlap REAL,
+    user_replied INTEGER DEFAULT 0, last_user_reply_at TEXT,
+    on_watchlist INTEGER DEFAULT 0, watchlist_added_at TEXT,
+    never INTEGER DEFAULT 0,        -- user said "never"
+    last_proposed_at TEXT,          -- anti-nag
+    -- capped JSON list of recent {reach_rate, replies} sightings; baseline_reach_rate
+    -- and median_replies_at_sighting are recomputed from this on every sighting
+    observations_json TEXT
+);
+
+-- One row per drafted reply take; mirrors draft_x's one-row-per-take shape
+-- (see draft_x above) so failed takes stay inspectable.
+CREATE TABLE IF NOT EXISTS radar_replies (
+    id INTEGER PRIMARY KEY,
+    post_id TEXT NOT NULL,
+    n INTEGER DEFAULT 1,
+    text TEXT, evidence_json TEXT,
+    question TEXT, answer TEXT,     -- the ask-a-question path
+    source TEXT DEFAULT 'claude',   -- claude|manual|qa
+    -- ready|pending_review|editing|asking|replied|skipped|failed
+    status TEXT NOT NULL DEFAULT 'ready',
+    tg_message_id TEXT, error TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Every billable X API resource, with the unit price at call time — the spend
+-- guard's ledger (radar.monthly_budget_usd).
+CREATE TABLE IF NOT EXISTS radar_spend (
+    id INTEGER PRIMARY KEY,
+    ts TEXT DEFAULT (datetime('now')),
+    kind TEXT,                      -- post_read|user_read
+    units INTEGER, unit_usd REAL, note TEXT
+);
 """
 
 
@@ -142,6 +203,12 @@ class Store:
         })
         _ensure_columns(self.db, "draft_x", {})
         _ensure_columns(self.db, "day_sessions", {"backend": "TEXT DEFAULT 'claude'"})
+        _ensure_columns(self.db, "radar_posts", {
+            # set once, the first time a post becomes 'asking' or 'suggested' —
+            # `state` mutates again once the user acts on it, so it can't be used
+            # to count today's suggestions after the fact (see radar_suggestions_since)
+            "suggested_at": "TEXT",
+        })
         self.db.commit()
 
     # ---- items -------------------------------------------------------------
@@ -578,3 +645,193 @@ class Store:
             "SELECT * FROM drafts WHERE reddit_status='posted'"
             " ORDER BY updated_at DESC LIMIT 1"
         ).fetchone()
+
+    # ---- X reply radar: posts ---------------------------------------------------
+    def radar_corpus(self) -> list[sqlite3.Row]:
+        """Every summarized item, for the reply radar's keyword retrieval
+        (server/radar/retrieve.py). Only items with a summary are searchable —
+        a harvested-but-unsummarized row has nothing useful to match against."""
+        return self.db.execute(
+            "SELECT id, source, day, summary FROM items"
+            " WHERE summary IS NOT NULL AND summary <> ''"
+        ).fetchall()
+
+    def upsert_radar_post(self, post_id: str, **fields) -> None:
+        """Insert a newly-sighted post, or update fields on one already seen
+        (e.g. a later poll re-reading its metrics). Column names are always
+        fixed kwargs from call sites here, not caller-controlled."""
+        fields = {**fields, "post_id": post_id}
+        cols = list(fields)
+        placeholders = ", ".join("?" for _ in cols)
+        updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "post_id")
+        self.db.execute(
+            f"INSERT INTO radar_posts({', '.join(cols)}) VALUES({placeholders})"  # noqa: S608
+            f" ON CONFLICT(post_id) DO UPDATE SET {updates}",
+            tuple(fields.values()),
+        )
+        self.db.commit()
+
+    def get_radar_post(self, post_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM radar_posts WHERE post_id=?", (post_id,)).fetchone()
+
+    def set_radar_post_state(self, post_id: str, state: str, **fields) -> None:
+        fields = {**fields, "state": state}
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE radar_posts SET {cols} WHERE post_id=?",  # noqa: S608
+                        (*fields.values(), post_id))
+        self.db.commit()
+
+    def radar_post_awaiting_answer(self) -> sqlite3.Row | None:
+        """The post whose §6 question is waiting on your free-text answer, if any."""
+        return self.db.execute(
+            "SELECT * FROM radar_posts WHERE state='asking' AND pending_question IS NOT NULL"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    def radar_suggestions_since(self, since_iso: str) -> int:
+        """Count of posts suggested (asked or drafted) since a UTC timestamp —
+        pipeline.py's max_suggestions_per_day hard stop (plan.md §11)."""
+        since_sqlite = since_iso.replace("T", " ").split("+")[0]
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM radar_posts WHERE suggested_at >= ?",
+            (since_sqlite,),
+        ).fetchone()
+        return int(row["n"])
+
+    def prune_radar_posts(self, cutoff_iso: str) -> int:
+        """plan.md §8: 30-day retention on `radar_posts` (and their replies) by
+        first sighting — `radar_authors` is deliberately excluded, it's the
+        accumulated judgement the whole watchlist relies on, not a cache."""
+        cutoff_sqlite = cutoff_iso.replace("T", " ").split("+")[0]
+        self.db.execute(
+            "DELETE FROM radar_replies WHERE post_id IN"
+            " (SELECT post_id FROM radar_posts WHERE first_seen_at < ?)",
+            (cutoff_sqlite,),
+        )
+        cur = self.db.execute("DELETE FROM radar_posts WHERE first_seen_at < ?", (cutoff_sqlite,))
+        self.db.commit()
+        return cur.rowcount
+
+    # ---- X reply radar: replies -------------------------------------------------
+    def add_radar_reply(self, post_id: str, n: int = 1, **fields) -> int:
+        fields = {**fields, "post_id": post_id, "n": n}
+        cols = ", ".join(fields)
+        placeholders = ", ".join("?" for _ in fields)
+        cur = self.db.execute(
+            f"INSERT INTO radar_replies({cols}) VALUES({placeholders})",  # noqa: S608
+            tuple(fields.values()),
+        )
+        self.db.commit()
+        return cur.lastrowid
+
+    def update_radar_reply(self, reply_id: int, **fields) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE radar_replies SET {cols} WHERE id=?",  # noqa: S608
+                        (*fields.values(), reply_id))
+        self.db.commit()
+
+    def get_radar_reply(self, reply_id: int) -> sqlite3.Row | None:
+        return self.db.execute("SELECT * FROM radar_replies WHERE id=?", (reply_id,)).fetchone()
+
+    def latest_radar_reply(self, post_id: str, status: str | None = None) -> sqlite3.Row | None:
+        sql = "SELECT * FROM radar_replies WHERE post_id=?"
+        args: tuple = (post_id,)
+        if status:
+            sql += " AND status=?"
+            args += (status,)
+        return self.db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+
+    def editing_radar_reply(self, max_age_hours: int = 12) -> sqlite3.Row | None:
+        """The radar reply whose text you're about to replace verbatim, if recent."""
+        return self.db.execute(
+            "SELECT * FROM radar_replies WHERE status='editing'"
+            " AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (f"-{int(max_age_hours)} hours",),
+        ).fetchone()
+
+    def radar_drafts_since(self, since_iso: str) -> int:
+        """Count of LLM-drafted takes since a UTC timestamp — pipeline.py's
+        max_drafts_per_hour cap (plan.md §5). Excludes 'manual' (verbatim Edit)
+        takes, which never ran the drafting LLM and aren't the thing being capped."""
+        since_sqlite = since_iso.replace("T", " ").split("+")[0]
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM radar_replies WHERE source != 'manual' AND created_at >= ?",
+            (since_sqlite,),
+        ).fetchone()
+        return int(row["n"])
+
+    # ---- X reply radar: spend ledger --------------------------------------------
+    def record_radar_spend(self, kind: str, units: int, unit_usd: float,
+                           note: str | None = None) -> None:
+        self.db.execute(
+            "INSERT INTO radar_spend(kind, units, unit_usd, note) VALUES(?,?,?,?)",
+            (kind, units, unit_usd, note),
+        )
+        self.db.commit()
+
+    def radar_spend_since(self, since_iso: str) -> float:
+        """Total USD spent since a UTC timestamp (radar_spend.ts is sqlite
+        datetime('now') format, space-separated)."""
+        since_sqlite = since_iso.replace("T", " ").split("+")[0]
+        row = self.db.execute(
+            "SELECT COALESCE(SUM(units * unit_usd), 0) AS total FROM radar_spend WHERE ts >= ?",
+            (since_sqlite,),
+        ).fetchone()
+        return float(row["total"])
+
+    # ---- X reply radar: authors / watchlist -------------------------------------
+    def get_radar_author(self, author_id: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM radar_authors WHERE author_id=?", (author_id,)).fetchone()
+
+    def get_radar_author_by_handle(self, handle: str) -> sqlite3.Row | None:
+        return self.db.execute(
+            "SELECT * FROM radar_authors WHERE handle=?", (handle,)).fetchone()
+
+    def upsert_radar_author(self, author_id: str, **fields) -> None:
+        fields = {**fields, "author_id": author_id}
+        cols = list(fields)
+        placeholders = ", ".join("?" for _ in cols)
+        updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "author_id")
+        self.db.execute(
+            f"INSERT INTO radar_authors({', '.join(cols)}) VALUES({placeholders})"  # noqa: S608
+            f" ON CONFLICT(author_id) DO UPDATE SET {updates}",
+            tuple(fields.values()),
+        )
+        self.db.commit()
+
+    def set_radar_author(self, author_id: str, **fields) -> None:
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE radar_authors SET {cols} WHERE author_id=?",  # noqa: S608
+                        (*fields.values(), author_id))
+        self.db.commit()
+
+    def radar_watchlist_authors(self) -> list[sqlite3.Row]:
+        return self.db.execute(
+            "SELECT * FROM radar_authors WHERE on_watchlist=1 ORDER BY handle"
+        ).fetchall()
+
+    def radar_candidate_authors(self) -> list[sqlite3.Row]:
+        """Everyone seen but not yet on the watchlist and not permanently declined —
+        the raw pool server/radar/watchlist.py filters down to real candidates."""
+        return self.db.execute(
+            "SELECT * FROM radar_authors WHERE on_watchlist=0 AND never=0"
+        ).fetchall()
+
+    def radar_watchlist_prompts_on(self, date_iso: str) -> int:
+        """Count of watchlist add/replace prompts actually sent on a given
+        UTC date (YYYY-MM-DD) — server/radar/watchlist.py's anti-nag cap."""
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM radar_authors WHERE last_proposed_at LIKE ?",
+            (f"{date_iso}%",),
+        ).fetchone()
+        return int(row["n"])
+
+    def mark_radar_author_replied(self, author_id: str) -> None:
+        self.db.execute(
+            "UPDATE radar_authors SET user_replied=1, last_user_reply_at=datetime('now')"
+            " WHERE author_id=?",
+            (author_id,),
+        )
+        self.db.commit()

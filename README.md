@@ -135,6 +135,17 @@ Skipping or failing a later step (X, Reddit) never touches a post already
 made on an earlier one. See [Cost](#cost) for what each channel actually
 costs to run.
 
+## X reply radar *(optional, `radar.enabled`, off by default)*
+
+**Discovery and draft-assist only — this never replies for you.** A browser
+extension you install and scroll x.com with (free) surfaces posts worth
+replying to and, once you've told it enough about who to watch, an optional
+budget-capped API poll (default cap $5/month) does the same for a short
+watchlist. Either way, all you ever get is a drafted reply in Telegram —
+**Approve · Edit · Skip** — that you paste in and send yourself. No code path
+here calls X's post endpoint. See `config.example.yaml`'s `radar:` block and
+`python -m setup.wizard --source radar` to turn it on.
+
 ## Images
 
 Approve doesn't publish right away. It first asks the *same session that
@@ -190,6 +201,7 @@ mechanics behind the Claude vs. Codex backends.
 | Post illustrations *(optional)* | ~$0.13–0.24/render; `image.enabled: false` skips this entirely |
 | X posting *(optional)* | Pay-per-use, no free tier; well under $1/month at one post a day |
 | Reddit *(optional)* | $0; no API or account, just a link you submit yourself |
+| X reply radar *(optional)* | Browser-extension lane is $0; the optional API polling lane is capped at `radar.monthly_budget_usd` (default $5/month, $0 disables it) |
 
 At one post a day with images on, expect low-single-digit dollars a month.
 
@@ -225,6 +237,11 @@ wizard's own prompts.
   unofficial client, not WhatsApp's Business API. Read-only by design.
 - **Reddit is draft-assist only, never automated posting** (see
   [What it posts to](#what-it-posts-to)).
+- **The X reply radar is discovery-and-draft only, never automated replying**
+  (see [X reply radar](#x-reply-radar-optional-radarenabled-off-by-default)).
+  Sending an LLM-drafted reply is still a suspension risk regardless of how it
+  was drafted — the mitigation is editing drafts and keeping volume low, not
+  this tool.
 - **Audio and screen capture need the bot process to be running.** In laptop
   mode both recorders are threads inside it, so capture stops when it stops.
   The wizard registers an OS-native autostart (systemd `--user`, launchd, or

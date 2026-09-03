@@ -3,6 +3,7 @@ config.yaml
 .env
 laptop/push.conf
 laptop/.last_push
+laptop/*.vbs
 *.session
 *.session-journal
 tokens/
@@ -29,3 +30,7 @@ PLAN.local.md
 .codegraph/
 .codegraph-init.log
 uploads/
+
+# Built extension archive — install it via extension/ unpacked instead;
+# rebuild with `python -m zipfile -c extension.zip extension/`
+extension.zip

@@ -4,6 +4,12 @@ REMOTE=myserver
 REMOTE_DIR=/opt/dailypost/ingest/laptop
 # optional command run on the remote after extraction (e.g. fix ownership):
 REMOTE_POST_CMD=
+# only needed if you run the X reply radar's browser extension from this
+# laptop against a server-mode instance: the port server/bot/localapi.py
+# listens on (loopback-only on the server), tunnelled here by
+# radar_tunnel.sh / install_radar_tunnel_task.ps1. Must match
+# radar.extension.port in the server's config.yaml.
+RADAR_PORT=8765
 
 PUSH_PATH=claude|$HOME/.claude/projects|*.jsonl
 PUSH_PATH=screenshots|$HOME/Pictures/Screenshots|*.png
